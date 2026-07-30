@@ -279,17 +279,26 @@ export class CharacterSelectScene extends Phaser.Scene {
     id: FighterId,
   ): void {
     avatar.removeAll(true);
-    if (id !== 'sword') {
+    if (id !== 'sword' && id !== 'fist' && id !== 'minigun') {
       avatar.add(this.add.image(0, 0, `fighter-${id}`).setTint(fighters[id].color));
       return;
     }
 
-    const body = this.add.image(-10, 0, 'fighter-body').setTint(fighters.sword.color);
-    const weapon = this.add.image(0, -1, 'weapon-sword')
+    const body = this.add.image(-10, 0, 'fighter-body').setTint(fighters[id].color);
+    const weapon = this.add.image(0, -1, `weapon-${id}`)
       .setOrigin(0.12, 0.5)
-      .setRotation(Phaser.Math.DegToRad(-28))
-      .setScale(0.88)
+      .setRotation(Phaser.Math.DegToRad(id === 'sword' ? -28 : id === 'fist' ? -8 : id === 'minigun' ? 1 : -4))
+      .setScale(id === 'sword' ? 0.88 : id === 'fist' ? 0.84 : id === 'minigun' ? 0.616 : 0.88)
       .setTint(0xffffff);
+    if (id === 'minigun') {
+      const grip = this.add.image(-4, -8, 'weapon-minigun-grip')
+        .setOrigin(1, 0.5)
+        .setRotation(Phaser.Math.DegToRad(-36))
+        .setScale(0.616)
+        .setTint(0xffffff);
+      avatar.add([body, weapon, grip]);
+      return;
+    }
     avatar.add([body, weapon]);
   }
 }

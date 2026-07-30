@@ -288,11 +288,15 @@ export class FightScene extends Phaser.Scene {
         this.ultimateIntro(fighter);
         if (fighter.fighterConfig.id === 'sword' && fighter.currentAttack) {
           this.startSwordUltimateCut(fighter, fighter.currentAttack);
+        } else if (fighter.fighterConfig.id === 'fist' && fighter.currentAttack) {
+          this.startFistRushDots(fighter, fighter.currentAttack);
+          this.startFistRushFinisher(fighter, fighter.currentAttack);
         }
       }
     });
     fighter.on('attack-active', (kind: AttackKind) => {
-      if (!(fighter.fighterConfig.id === 'sword' && kind === 'ultimate')) {
+      if (!((fighter.fighterConfig.id === 'sword' || fighter.fighterConfig.id === 'fist')
+        && kind === 'ultimate')) {
         this.attackVisual(fighter, kind);
       }
       if (fighter.fighterConfig.id === 'minigun' && kind === 'ultimate') this.spawnLaserBarrage(fighter);
@@ -356,8 +360,6 @@ export class FightScene extends Phaser.Scene {
           }
         });
       });
-    } else if (attacker.fighterConfig.id === 'fist' && attack.kind === 'ultimate') {
-      this.rushVisual(target, attacker.fighterConfig.color);
     } else if (attacker.fighterConfig.id === 'minigun' && attack.kind === 'basic') {
       this.continueBurst(attacker, target, attack);
     } else if (attacker.fighterConfig.id === 'plant' && attack.kind === 'basic') {
@@ -379,12 +381,13 @@ export class FightScene extends Phaser.Scene {
         if (target.state === 'KO') return;
         if (target.receiveBonusHit(
           2,
-          shot === shotCount - 1 ? attack.direction * 85 : 0,
-          -18,
+          0,
+          0,
           this.time.now,
           attacker,
-          90,
+          0,
           'basic',
+          true,
         )) {
           this.damageNumber(target.x, target.y - 82, target.lastDamageTaken);
           this.combat.showHitEffect(target.x, target.y - 24, attacker.fighterConfig.color);
@@ -748,21 +751,29 @@ export class FightScene extends Phaser.Scene {
       const sequence = fighter.currentAttack?.sequence ?? 1;
       const count = minigunBurstCount(sequence);
       for (let index = 0; index < count; index += 1) {
-        this.time.delayedCall(index * 58, () => {
-          const bullet = this.add.rectangle(
+        this.time.delayedCall(index * 66, () => {
+          const bulletBorder = this.add.rectangle(
             fighter.x + fighter.facing * 60,
             fighter.y - 33 + (index % 2) * 4,
             20,
             7,
+            0x111111,
+            0.98,
+          ).setDepth(16);
+          const bulletCore = this.add.rectangle(
+            bulletBorder.x,
+            bulletBorder.y,
+            14,
+            3,
             index % 2 ? 0xffffff : color,
             0.95,
-          ).setDepth(16);
+          ).setDepth(17);
           this.tweens.add({
-            targets: bullet,
-            x: bullet.x + fighter.facing * 420,
+            targets: [bulletBorder, bulletCore],
+            x: bulletBorder.x + fighter.facing * 756,
             alpha: 0,
-            duration: 220,
-            onComplete: () => bullet.destroy(),
+            duration: 249,
+            onComplete: () => { bulletBorder.destroy(); bulletCore.destroy(); },
           });
         });
       }
@@ -988,19 +999,241 @@ export class FightScene extends Phaser.Scene {
     const offsetY = position.y - fighter.y;
     fighter.setPosition(position.x, position.y).setVelocity(0, 0).setAcceleration(0, 0);
     fighter.weapon.setPosition(fighter.weapon.x + offsetX, fighter.weapon.y + offsetY);
+    fighter.minigunGrip?.setPosition(
+      fighter.minigunGrip.x + offsetX,
+      fighter.minigunGrip.y + offsetY,
+    );
   }
 
-  private rushVisual(target: Fighter, color: number): void {
-    for (let i = 0; i < 7; i += 1) {
-      this.time.delayedCall(i * 45, () => {
-        const burst = this.add.circle(
-          target.x + Phaser.Math.Between(-38, 38),
-          target.y - Phaser.Math.Between(25, 82),
-          Phaser.Math.Between(10, 23), color, 0.75,
-        ).setDepth(20);
-        this.tweens.add({ targets: burst, scale: 1.8, alpha: 0, duration: 150, onComplete: () => burst.destroy() });
+  private startHeavyPunchCharge(fighter: Fighter, attack: ActiveAttack): void {
+    const color = fighter.displayTint;
+    const outer = this.add.circle(fighter.weapon.x, fighter.weapon.y, 20, color, 0.08)
+      .setStrokeStyle(4, color, 0.9).setDepth(19);
+    const inner = this.add.circle(fighter.weapon.x, fighter.weapon.y, 8, 0xffffff, 0.72)
+      .setDepth(20);
+    let cleanedUp = false;
+
+    const cleanup = () => {
+      if (cleanedUp) return;
+      cleanedUp = true;
+      this.events.off(Phaser.Scenes.Events.UPDATE, update);
+      outer.destroy();
+      inner.destroy();
+    };
+    const update = () => {
+      if (!fighter.currentAttack
+        || fighter.currentAttack.id !== attack.id
+        || fighter.currentAttack.phase !== 'recovery') {
+        cleanup();
+        return;
+      }
+      const recoveryStartedAt = attack.startedAt
+        + attack.config.startupMs + attack.config.activeMs;
+      const progress = Phaser.Math.Clamp(
+        (this.time.now - recoveryStartedAt) / 210,
+        0,
+        1,
+      );
+      const pulse = 1 + Math.sin(this.time.now / 38) * 0.12;
+      outer.setPosition(fighter.weapon.x, fighter.weapon.y)
+        .setScale((0.55 + progress * 1.15) * pulse)
+        .setAlpha(0.35 + progress * 0.65);
+      inner.setPosition(fighter.weapon.x, fighter.weapon.y)
+        .setScale(0.55 + progress * 0.7)
+        .setAlpha(0.45 + progress * 0.5);
+    };
+
+    this.events.on(Phaser.Scenes.Events.UPDATE, update);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, cleanup);
+    update();
+  }
+
+  private heavyPunchReleaseVisual(fighter: Fighter): void {
+    const color = fighter.displayTint;
+    const impactX = fighter.x + fighter.facing * 66;
+    const impactY = fighter.y - 38;
+    const shock = this.add.triangle(
+      impactX,
+      impactY,
+      0,
+      -24,
+      94,
+      0,
+      0,
+      24,
+      color,
+      0.62,
+    ).setScale(fighter.facing, 1).setDepth(16);
+    const ring = this.add.circle(impactX, impactY, 18, color, 0.12)
+      .setStrokeStyle(6, 0xffffff, 0.82).setDepth(17);
+    this.tweens.add({
+      targets: shock,
+      x: shock.x + fighter.facing * 40,
+      scaleX: fighter.facing * 1.35,
+      alpha: 0,
+      duration: 170,
+      ease: 'Cubic.Out',
+      onComplete: () => shock.destroy(),
+    });
+    this.tweens.add({
+      targets: ring,
+      scale: 2,
+      alpha: 0,
+      duration: 190,
+      onComplete: () => ring.destroy(),
+    });
+  }
+
+  private startFistRushFinisher(fighter: Fighter, attack: ActiveAttack): void {
+    if (attack.sequence < 4) return;
+    const chargeDelay = attack.config.startupMs + attack.config.activeMs + 16;
+    this.time.delayedCall(chargeDelay, () => {
+      const liveAttack = fighter.currentAttack;
+      if (!liveAttack || liveAttack.id !== attack.id || liveAttack.phase !== 'recovery') return;
+      this.startHeavyPunchCharge(fighter, attack);
+    });
+    const finisherDelay = attack.config.startupMs + attack.config.activeMs + 210;
+    this.time.delayedCall(finisherDelay, () => {
+      const liveAttack = fighter.currentAttack;
+      if (!liveAttack || liveAttack.id !== attack.id || liveAttack.phase !== 'recovery') return;
+      this.heavyPunchReleaseVisual(fighter);
+      const target = fighter === this.p1 ? this.p2 : this.p1;
+      if (!attack.hitTicks.has(target.playerNumber)) return;
+      if (target.receiveBonusHit(
+        15,
+        attack.direction * attack.config.knockbackX,
+        attack.config.knockbackY,
+        this.time.now,
+        fighter,
+        attack.config.hitstunMs,
+        'ultimate',
+      )) {
+        this.onHit(fighter, target, attack);
+      }
+    });
+  }
+
+  private startFistRushDots(fighter: Fighter, attack: ActiveAttack): void {
+    const color = fighter.displayTint;
+    const dots = [
+      this.add.circle(fighter.x, fighter.y - 42, 14, color, 1),
+      this.add.circle(fighter.x, fighter.y - 42, 14, color, 1),
+      this.add.circle(fighter.x, fighter.y - 42, 14, color, 1),
+      this.add.circle(fighter.x, fighter.y - 42, 14, color, 1),
+    ].map((dot) => dot.setStrokeStyle(3, 0xffffff, 0.72).setDepth(21));
+    const trails = [
+      this.add.graphics().setDepth(20),
+      this.add.graphics().setDepth(20),
+      this.add.graphics().setDepth(20),
+      this.add.graphics().setDepth(20),
+    ];
+    const trailPoints: Array<Array<{ x: number; y: number }>> = [[], [], [], []];
+    const startTime = this.time.now;
+    const cycleMs = Phaser.Math.Between(155, 185);
+    const forwardReach = attack.config.hitboxOffsetX + attack.config.hitboxWidth / 2;
+    const centerVertical = -24 + attack.config.hitboxOffsetY;
+    const verticalReach = attack.config.hitboxHeight / 2;
+    const verticalBandCount = 6;
+    const bandOffset = Phaser.Math.Between(0, verticalBandCount - 1);
+    const trajectories = dots.map(() => ({
+      cycle: -1,
+      arcOffset: 0,
+      endOffset: 0,
+      horizontalControl: 0.5,
+    }));
+    let cleanedUp = false;
+
+    const cleanup = () => {
+      if (cleanedUp) return;
+      cleanedUp = true;
+      this.events.off(Phaser.Scenes.Events.UPDATE, update);
+      dots.forEach((dot) => dot.destroy());
+      trails.forEach((trail) => trail.destroy());
+    };
+    const pointOnRushParabola = (
+      progress: number,
+      trajectory: { arcOffset: number; endOffset: number; horizontalControl: number },
+    ) => {
+      const inverse = 1 - progress;
+      const arc = 4 * progress * (1 - progress);
+      return {
+        x: 2 * inverse * progress * forwardReach * trajectory.horizontalControl
+          + progress * progress * forwardReach,
+        y: Phaser.Math.Clamp(
+          centerVertical + trajectory.arcOffset * arc + trajectory.endOffset * progress,
+          centerVertical - verticalReach,
+          centerVertical + verticalReach,
+        ),
+      };
+    };
+    const update = () => {
+      if (!fighter.currentAttack
+        || fighter.currentAttack.id !== attack.id
+        || fighter.currentAttack.phase === 'recovery') {
+        cleanup();
+        return;
+      }
+      const elapsed = this.time.now - startTime;
+      dots.forEach((dot, index) => {
+        const staggeredElapsed = Math.max(0, elapsed - index * cycleMs / dots.length);
+        const cycle = Math.floor(staggeredElapsed / cycleMs);
+        const progress = (staggeredElapsed / cycleMs) % 1;
+        const trajectory = trajectories[index];
+        if (trajectory.cycle !== cycle) {
+          trajectory.cycle = cycle;
+          const band = (bandOffset + cycle * dots.length + index) % verticalBandCount;
+          const bandProgress = (band + Phaser.Math.FloatBetween(0.12, 0.88))
+            / verticalBandCount;
+          trajectory.arcOffset = Phaser.Math.Linear(
+            -verticalReach,
+            verticalReach,
+            bandProgress,
+          );
+          trajectory.endOffset = Phaser.Math.FloatBetween(-verticalReach, verticalReach);
+          trajectory.horizontalControl = Phaser.Math.FloatBetween(0.28, 0.72);
+        }
+        const point = pointOnRushParabola(progress, trajectory);
+        dot.setPosition(
+          fighter.x + fighter.facing * point.x,
+          fighter.y + point.y,
+        ).setAlpha(fighter.alpha);
+
+        const history = trailPoints[index];
+        const previous = history[0];
+        if (!previous || Phaser.Math.Distance.Between(previous.x, previous.y, dot.x, dot.y) < 34) {
+          history.unshift({ x: dot.x, y: dot.y });
+        } else {
+          history.length = 0;
+          history.push({ x: dot.x, y: dot.y });
+        }
+        history.splice(8);
+
+        const trail = trails[index].clear();
+        for (let pointIndex = 0; pointIndex < history.length - 1; pointIndex += 1) {
+          const head = history[pointIndex];
+          const tail = history[pointIndex + 1];
+          const dx = head.x - tail.x;
+          const dy = head.y - tail.y;
+          const length = Math.max(1, Math.hypot(dx, dy));
+          const width = 10 * (1 - pointIndex / Math.max(1, history.length - 1));
+          const normalX = -dy / length * width;
+          const normalY = dx / length * width;
+          const alpha = 0.5 * (1 - pointIndex / Math.max(1, history.length - 1));
+          trail.fillStyle(color, alpha * fighter.alpha).fillTriangle(
+            head.x + normalX,
+            head.y + normalY,
+            head.x - normalX,
+            head.y - normalY,
+            tail.x,
+            tail.y,
+          );
+        }
       });
-    }
+    };
+
+    this.events.on(Phaser.Scenes.Events.UPDATE, update);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, cleanup);
+    update();
   }
 
   private damageNumber(x: number, y: number, damage: number): void {

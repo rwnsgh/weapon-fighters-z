@@ -28,12 +28,27 @@ describe('fighter roster', () => {
     expect(fighters.sword.skill).toMatchObject({ damage: 20, manaCost: 30 });
     expect(fighters.sword.ultimate).toMatchObject({ damage: 10, manaCost: 75 });
     expect(fighters.fist.basicAttack.damage).toBe(10);
-    expect(fighters.fist.skill).toMatchObject({ damage: 20, manaCost: 25 });
+    expect(fighters.fist.skill).toMatchObject({
+      damage: 20,
+      manaCost: 25,
+      startupMs: 0,
+      knockbackY: -1160,
+      lungeVelocity: 90,
+    });
     expect(fighters.fist.ultimate.manaCost).toBe(60);
+    expect(fighters.fist.ultimate.hitstunMs).toBe(500);
   });
 
   it('keeps the revised proposal values for the four completed fighters', () => {
     expect(fighters.minigun.basicAttack.damage).toBe(2);
+    expect(fighters.minigun.basicAttack).toMatchObject({
+      hitboxWidth: 648,
+      hitboxOffsetX: 334,
+      hitstunMs: 0,
+      knockbackX: 0,
+      knockbackY: 0,
+      lungeVelocity: 0,
+    });
     expect(fighters.minigun.ultimate.manaCost).toBe(80);
     expect(fighters.clock.basicAttack.damage).toBe(3);
     expect(fighters.clock.skill.manaCost).toBe(20);

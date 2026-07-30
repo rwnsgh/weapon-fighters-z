@@ -39,6 +39,21 @@ export function punchRushDamage(rage: number): number {
   return 30;
 }
 
+export const punchRushHitDamage = 5;
+export const punchRushHitIntervalMs = 90;
+
+export function punchRushRapidDamage(rage: number): number {
+  return rage >= 4 ? 45 : punchRushDamage(rage);
+}
+
+export function punchRushHitCount(rage: number): number {
+  return punchRushRapidDamage(rage) / punchRushHitDamage;
+}
+
+export function punchRushActiveDuration(rage: number): number {
+  return punchRushHitCount(rage) * punchRushHitIntervalMs;
+}
+
 export function consumeRage(stats: CombatantStats): CombatantStats {
   return { ...stats, rage: 0 };
 }

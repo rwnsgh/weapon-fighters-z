@@ -4,13 +4,19 @@ import type { FighterId } from '../data/types';
 export class BootScene extends Phaser.Scene {
   constructor() { super('BootScene'); }
 
+  preload(): void {
+    this.load.image('weapon-fist', 'assets/weapon-fist.png');
+    this.load.image('weapon-minigun', 'assets/weapon-minigun.png');
+  }
+
   create(): void {
     const fighterIds: FighterId[] = ['sword', 'fist', 'minigun', 'clock', 'plant', 'rock'];
     this.createBodyTexture();
     fighterIds.forEach((id) => {
       this.createFighterTexture(id);
-      this.createWeaponTexture(id);
+      if (id !== 'fist' && id !== 'minigun') this.createWeaponTexture(id);
     });
+    this.createMinigunGripTexture();
     const g = this.make.graphics({ x: 0, y: 0 });
     g.fillStyle(0xffffff).fillRect(0, 0, 32, 32);
     g.generateTexture('pixel', 32, 32);
@@ -36,6 +42,16 @@ export class BootScene extends Phaser.Scene {
     const g = this.make.graphics({ x: 0, y: 0 });
     this.drawWeapon(g, id, 0, 0, 1);
     g.generateTexture(`weapon-${id}`, 84, 56);
+    g.destroy();
+  }
+
+  private createMinigunGripTexture(): void {
+    const g = this.make.graphics({ x: 0, y: 0 });
+    const outline = 0x050812;
+    g.fillStyle(0x7786aa).fillRoundedRect(2, 3, 27, 13, 3);
+    g.lineStyle(3, outline, 1).strokeRoundedRect(2, 3, 27, 13, 3);
+    g.fillStyle(0xe7efff, 0.8).fillRoundedRect(5, 5, 21, 3, 1);
+    g.generateTexture('weapon-minigun-grip', 32, 20);
     g.destroy();
   }
 
@@ -101,18 +117,16 @@ export class BootScene extends Phaser.Scene {
       return;
     }
     if (id === 'minigun') {
-      g.fillStyle(dark).fillRoundedRect(x(4), y(15), s(31), s(28), s(6));
-      g.lineStyle(Math.max(2, s(4)), outline).strokeRoundedRect(x(4), y(15), s(31), s(28), s(6));
-      g.fillStyle(shade).fillCircle(x(31), y(29), s(12));
-      g.lineStyle(Math.max(2, s(3)), outline).strokeCircle(x(31), y(29), s(12));
-      [18, 27, 36].forEach((barrelY) => {
-        g.fillStyle(metal).fillRoundedRect(x(31), y(barrelY), s(43), s(6), s(2));
-        g.lineStyle(Math.max(1, s(2)), outline).strokeRoundedRect(x(31), y(barrelY), s(43), s(6), s(2));
+      g.fillStyle(metal).fillCircle(x(24), y(29), s(16));
+      g.lineStyle(Math.max(2, s(4)), outline).strokeCircle(x(24), y(29), s(16));
+      g.fillStyle(shade).fillRect(x(27), y(13), s(9), s(32));
+      g.lineStyle(Math.max(2, s(3)), outline).strokeRect(x(27), y(13), s(9), s(32));
+      [14, 23, 32, 41].forEach((barrelY) => {
+        g.fillStyle(metal).fillRoundedRect(x(35), y(barrelY), s(43), s(6), s(2));
+        g.lineStyle(Math.max(1, s(2)), outline).strokeRoundedRect(x(35), y(barrelY), s(43), s(6), s(2));
       });
-      g.fillStyle(dark).fillRect(x(70), y(15), s(9), s(31));
-      g.lineStyle(Math.max(2, s(3)), outline).strokeRect(x(70), y(15), s(9), s(31));
-      polygon([13, 42, 27, 42, 23, 54, 12, 54], shade, Math.max(2, s(3)));
-      g.fillStyle(metal).fillRect(x(8), y(20), s(14), s(4));
+      polygon([3, 7, 21, 20, 16, 28, 0, 16], shade, Math.max(2, s(3)));
+      g.fillStyle(metal).fillRect(x(29), y(6), s(3), s(8));
       return;
     }
     if (id === 'clock') {

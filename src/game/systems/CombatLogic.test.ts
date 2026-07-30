@@ -10,7 +10,10 @@ import {
   evenlySpacedCutAngle,
   facingTowardOpponent,
   minigunBurstCount,
+  punchRushActiveDuration,
   punchRushDamage,
+  punchRushHitCount,
+  punchRushRapidDamage,
   regenerateMana,
   screenCutPath,
   shouldApplyInterruptedTrade,
@@ -63,6 +66,19 @@ describe('combat calculations', () => {
     [4, 60],
   ])('calculates punch rush total damage for %i stacks', (rage, damage) => {
     expect(punchRushDamage(rage)).toBe(damage);
+  });
+
+  it('reserves the last 15 damage for the four-stack finisher', () => {
+    expect(punchRushRapidDamage(4)).toBe(45);
+  });
+
+  it.each([
+    [0, 6, 540],
+    [2, 8, 720],
+    [4, 9, 810],
+  ])('scales punch rush duration with total damage at %i stacks', (rage, hits, duration) => {
+    expect(punchRushHitCount(rage)).toBe(hits);
+    expect(punchRushActiveDuration(rage)).toBe(duration);
   });
 
   it('clears rage after an ultimate', () => {

@@ -26,7 +26,18 @@ export class TitleScene extends Phaser.Scene {
     this.add.circle(1015, 315, 108, 0xff3f87, 0.08).setStrokeStyle(2, 0xffc0d7, 0.28);
 
     const p1 = this.add.image(265, 325, 'fighter-sword').setTint(0x4ce4ff).setScale(2.25);
-    const p2 = this.add.image(1015, 325, 'fighter-fist').setTint(0xff668c).setScale(2.25).setFlipX(true);
+    const p2Body = this.add.image(-10, 0, 'fighter-body').setTint(0xff668c);
+    const p2FistOutline = this.add.image(0, -1, 'weapon-fist')
+      .setOrigin(0.12, 0.5)
+      .setRotation(Phaser.Math.DegToRad(-8))
+      .setScale(0.91)
+      .setTintFill(0x050812);
+    const p2Fist = this.add.image(0, -1, 'weapon-fist')
+      .setOrigin(0.12, 0.5)
+      .setRotation(Phaser.Math.DegToRad(-8))
+      .setScale(0.84)
+      .setTintFill(0xff668c);
+    const p2 = this.add.container(1015, 325, [p2Body, p2FistOutline, p2Fist]).setScale(-2.25, 2.25);
     this.tweens.add({ targets: p1, y: 316, duration: 1050, yoyo: true, repeat: -1, ease: 'Sine.inOut' });
     this.tweens.add({ targets: p2, y: 334, duration: 1050, yoyo: true, repeat: -1, ease: 'Sine.inOut' });
     this.tweens.add({ targets: [leftRing, rightRing], alpha: 0.68, duration: 820, yoyo: true, repeat: -1 });

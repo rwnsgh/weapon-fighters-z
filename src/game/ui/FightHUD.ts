@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { Fighter } from '../entities/Fighter';
+import { Fighter, type FighterStatusEffect } from '../entities/Fighter';
 import { RoundManager } from '../systems/RoundManager';
 import { fontBody, fontDisplay, fontTech } from './ui';
 
@@ -12,6 +12,8 @@ export class FightHUD {
   private readonly p2Value: Phaser.GameObjects.Text;
   private readonly p1Stacks: Phaser.GameObjects.Image[] = [];
   private readonly p2Stacks: Phaser.GameObjects.Image[] = [];
+  private readonly p1Statuses: Phaser.GameObjects.Text[] = [];
+  private readonly p2Statuses: Phaser.GameObjects.Text[] = [];
   private p1Trail: number;
   private p2Trail: number;
 
@@ -34,10 +36,10 @@ export class FightHUD {
     this.center = scene.add.text(640, 24, '', {
       fontFamily: fontTech, fontSize: '18px', fontStyle: 'bold', color: '#ffffff', align: 'center',
     }).setOrigin(0.5, 0).setDepth(51);
-    this.p1Rage = scene.add.text(110, 105, '', {
+    this.p1Rage = scene.add.text(110, 149, '', {
       fontFamily: fontBody, fontSize: '14px', fontStyle: 'bold', color: '#ffbe4f',
     }).setDepth(51);
-    this.p2Rage = scene.add.text(1170, 105, '', {
+    this.p2Rage = scene.add.text(1170, 149, '', {
       fontFamily: fontBody, fontSize: '14px', fontStyle: 'bold', color: '#ffbe4f',
     }).setOrigin(1, 0).setDepth(51);
     this.p1Value = scene.add.text(118, 58, '', {
@@ -54,6 +56,21 @@ export class FightHUD {
       this.p1Stacks.push(scene.add.image(0, 0, 'weapon-fist').setScale(0.22).setDepth(52).setVisible(false));
       this.p2Stacks.push(scene.add.image(0, 0, 'weapon-fist').setScale(-0.22, 0.22).setDepth(52).setVisible(false));
     }
+    for (let index = 0; index < 9; index += 1) {
+      const style: Phaser.Types.GameObjects.Text.TextStyle = {
+        fontFamily: fontTech,
+        fontStyle: 'bold',
+        fontSize: '22px',
+        color: '#ffffff',
+        padding: { x: 8, y: 5 },
+      };
+      this.p1Statuses.push(
+        scene.add.text(0, 0, '', style).setDepth(53).setVisible(false),
+      );
+      this.p2Statuses.push(
+        scene.add.text(0, 0, '', style).setOrigin(1, 0).setDepth(53).setVisible(false),
+      );
+    }
   }
 
   update(p1: Fighter, p2: Fighter, rounds: RoundManager, now: number): void {
@@ -69,6 +86,8 @@ export class FightHUD {
     this.p2Rage.setText(p2.fighterConfig.id === 'clock' ? `시간 스택 ${p2.stats.rage}/4` : '');
     this.updateFistStacks(this.p1Stacks, p1);
     this.updateFistStacks(this.p2Stacks, p2);
+    this.updateStatusIcons(this.p1Statuses, p1, now, false);
+    this.updateStatusIcons(this.p2Statuses, p2, now, true);
     this.p1Value.setText(`${Math.ceil(p1.stats.health)}`);
     this.p2Value.setText(`${Math.ceil(p2.stats.health)}`);
   }
@@ -109,6 +128,42 @@ export class FightHUD {
         .setTint(index < fighter.stats.rage ? 0xff9f31 : 0xc9cedc)
         .setAlpha(index < fighter.stats.rage ? 1 : 0.55)
         .setScale(direction * 0.22, 0.22);
+    });
+  }
+
+  private updateStatusIcons(
+    icons: Phaser.GameObjects.Text[],
+    fighter: Fighter,
+    now: number,
+    reverse: boolean,
+  ): void {
+    const presentation: Record<
+      FighterStatusEffect,
+      { symbol: string; background: string }
+    > = {
+      invulnerable: { symbol: '◆', background: '#d9ecff' },
+      haste: { symbol: '»', background: '#168fb8' },
+      'attack-speed-up': { symbol: '↯', background: '#256fc4' },
+      'damage-up': { symbol: '▲', background: '#258d56' },
+      slow: { symbol: '◷', background: '#4d56a8' },
+      weakened: { symbol: '−', background: '#6a526f' },
+      'move-speed-down': { symbol: '⇣', background: '#5a3f91' },
+      burn: { symbol: '♨', background: '#b73525' },
+      stun: { symbol: '✹', background: '#b37618' },
+    };
+    const effects = fighter.getStatusEffects(now);
+    icons.forEach((icon, index) => {
+      const effect = effects[index];
+      icon.setVisible(Boolean(effect));
+      if (!effect) return;
+      const item = presentation[effect];
+      const x = reverse ? 1170 - index * 42 : 110 + index * 42;
+      icon
+        .setPosition(x, 101)
+        .setText(item.symbol)
+        .setColor(effect === 'invulnerable' ? '#182239' : '#ffffff')
+        .setBackgroundColor(item.background)
+        .setAlpha(0.9 + Math.sin(now / 160 + index) * 0.1);
     });
   }
 }

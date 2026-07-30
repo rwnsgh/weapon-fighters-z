@@ -7,7 +7,10 @@ import {
   canUseMana,
   consumeRage,
   facingTowardOpponent,
-  punchRushDamage,
+  punchRushActiveDuration,
+  punchRushHitCount,
+  punchRushHitDamage,
+  punchRushHitIntervalMs,
   regenerateMana,
   shouldSwordSlamDive,
   shouldSwordSlamLand,
@@ -21,6 +24,16 @@ export type FighterState =
   | 'ATTACK' | 'SKILL' | 'ULTIMATE'
   | 'HITSTUN' | 'STUN' | 'KO' | 'RESPAWN_INVULNERABLE';
 export type AttackPhase = 'startup' | 'active' | 'recovery';
+export type FighterStatusEffect =
+  | 'invulnerable'
+  | 'haste'
+  | 'attack-speed-up'
+  | 'damage-up'
+  | 'slow'
+  | 'weakened'
+  | 'move-speed-down'
+  | 'burn'
+  | 'stun';
 
 export interface ActiveAttack {
   config: AttackConfig;
@@ -30,6 +43,7 @@ export interface ActiveAttack {
   phase: AttackPhase;
   direction: -1 | 1;
   hitTargets: Set<number>;
+  hitTicks: Map<number, number>;
   sequence: number;
 }
 
@@ -64,8 +78,11 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   private frozenUntil = 0;
   private swordSlamDescending = false;
   private swordSlamLockedUntil = 0;
+  private uppercutRiseLocked = false;
+  private uppercutRecoilUntil = 0;
   readonly displayTint: number;
   readonly weapon: Phaser.GameObjects.Image;
+  readonly minigunGrip?: Phaser.GameObjects.Image;
 
   constructor(
     scene: Phaser.Scene,
@@ -95,6 +112,13 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       .setTint(tint)
       .setName(`fighter-weapon-${playerNumber}`)
       .setDepth(11);
+    if (config.id === 'minigun') {
+      this.minigunGrip = scene.add.image(x, y - 28, 'weapon-minigun-grip')
+        .setOrigin(1, 0.5)
+        .setTint(tint)
+        .setName(`fighter-minigun-grip-${playerNumber}`)
+        .setDepth(12);
+    }
     this.setTint(tint);
     this.setOrigin(0.5, 1);
     this.setCollideWorldBounds(false);
@@ -135,6 +159,8 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     this.frozenUntil = 0;
     this.swordSlamDescending = false;
     this.swordSlamLockedUntil = 0;
+    this.uppercutRiseLocked = false;
+    this.uppercutRecoilUntil = 0;
     this.jumpBufferedUntil = 0;
     this.coyoteUntil = 0;
     this.bufferedAttack = undefined;
@@ -165,7 +191,12 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     } else if (this.state === 'RESPAWN_INVULNERABLE') {
       this.setAlpha(Math.floor(now / 90) % 2 === 0 ? 0.3 : 0.75);
     }
-    if ((this.state === 'HITSTUN' || this.state === 'STUN') && now >= this.stateUntil) {
+    if (this.uppercutRiseLocked && this.bodyRef.velocity.y >= 0) {
+      this.uppercutRiseLocked = false;
+    }
+    if ((this.state === 'HITSTUN' || this.state === 'STUN')
+      && now >= this.stateUntil
+      && !this.uppercutRiseLocked) {
       this.state = this.bodyRef.blocked.down ? 'IDLE' : 'FALL';
     }
     let swordSlamLandingLocked = now < this.swordSlamLockedUntil;
@@ -212,7 +243,8 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       this.jumpBufferedUntil = now + combatTuning.jumpBufferMs;
       this.jumpCutApplied = false;
     }
-    const actionLocked = this.currentAttack || swordSlamLandingLocked
+    const mobileMinigunBurst = this.currentAttack?.config.id === 'minigun-burst';
+    const actionLocked = (this.currentAttack && !mobileMinigunBurst) || swordSlamLandingLocked
       || this.state === 'HITSTUN' || this.state === 'STUN';
     if (swordSlamLandingLocked) {
       this.setAcceleration(0, 0);
@@ -232,6 +264,21 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       if (this.swordSlamDescending
         && this.bodyRef.velocity.y < combatTuning.swordSlamDiveVelocity) {
         this.setVelocityY(combatTuning.swordSlamDiveVelocity);
+      }
+    } else if (
+      this.controlEnabled
+      && this.currentAttack?.config.id === 'fist-uppercut'
+      && !grounded
+    ) {
+      const slowScale = now < this.slowedUntil ? combatTuning.slowMoveScale : 1;
+      const direction = Number(input.right) - Number(input.left);
+      const maxMoveSpeed = this.fighterConfig.moveSpeed * slowScale;
+      this.setAccelerationX(
+        direction * this.fighterConfig.moveSpeed * combatTuning.airAcceleration * slowScale,
+      );
+      this.setDragX(direction === 0 ? combatTuning.airBraking : combatTuning.activeMoveDrag);
+      if (Math.abs(this.bodyRef.velocity.x) > maxMoveSpeed) {
+        this.setVelocityX(Phaser.Math.Clamp(this.bodyRef.velocity.x, -maxMoveSpeed, maxMoveSpeed));
       }
     } else if (this.controlEnabled && !actionLocked && this.state !== 'RESPAWN_INVULNERABLE') {
       const slowScale = now < this.slowedUntil ? combatTuning.slowMoveScale : 1;
@@ -266,9 +313,11 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     } else if (actionLocked && this.currentAttack) {
       this.setAccelerationX(0);
       this.setDragX(grounded ? combatTuning.attackGroundDrag : combatTuning.attackAirDrag);
-      const lunge = this.currentAttack.phase === 'active'
-        ? this.currentAttack.config.lungeVelocity ?? 0
-        : 0;
+      const lunge = now < this.uppercutRecoilUntil
+        ? -220
+        : this.currentAttack.phase === 'active'
+          ? this.currentAttack.config.lungeVelocity ?? 0
+          : 0;
       this.setVelocityX(this.currentAttack.direction * lunge);
     } else {
       this.setAccelerationX(0);
@@ -321,7 +370,11 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       sequence = this.stats.rage;
     }
     if (kind === 'ultimate' && this.fighterConfig.id === 'fist') {
-      config = { ...base, damage: punchRushDamage(this.stats.rage) };
+      config = {
+        ...base,
+        damage: punchRushHitDamage,
+        activeMs: punchRushActiveDuration(this.stats.rage),
+      };
     } else if (kind === 'basic' && this.fighterConfig.id === 'clock' && now < this.timeStopUntil) {
       config = {
         ...base,
@@ -370,14 +423,16 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       this.enragedUntil = now + 10000;
     }
     this.stats = spendMana(this.stats, config.manaCost);
+    const startsActive = config.startupMs === 0;
     this.currentAttack = {
       config,
       kind,
       startedAt: now,
       id: `${this.playerNumber}-${config.id}-${this.attackCounter += 1}`,
-      phase: 'startup',
+      phase: startsActive ? 'active' : 'startup',
       direction: this.facing,
       hitTargets: new Set(),
+      hitTicks: new Map(),
       sequence,
     };
     if (config.id === 'sword-slam') {
@@ -385,9 +440,14 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       this.bodyRef.setGravityY(combatTuning.swordSlamAscentGravityOffset);
       this.setVelocityY(combatTuning.swordSlamLaunchVelocity);
       this.setAccelerationY(0);
+    } else if (config.id === 'fist-uppercut') {
+      this.setVelocityY(-679);
+      this.setAccelerationY(0);
+      this.jumpCutApplied = true;
     }
     this.state = kind === 'basic' ? 'ATTACK' : kind === 'skill' ? 'SKILL' : 'ULTIMATE';
     this.emit('attack-start', kind);
+    if (startsActive) this.emit('attack-active', kind);
     return true;
   }
 
@@ -453,6 +513,22 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     return this.getBodyHurtbox();
   }
 
+  getStatusEffects(now: number): FighterStatusEffect[] {
+    const effects: FighterStatusEffect[] = [];
+    if (now < this.invulnerableUntil) effects.push('invulnerable');
+    if (now < this.hastenedUntil || this.movementMultiplier > 1) effects.push('haste');
+    if (now < this.hastenedUntil) effects.push('attack-speed-up');
+    if (now < this.enragedUntil || this.damageMultiplier > 1) effects.push('damage-up');
+    if (now < this.slowedUntil) effects.push('slow');
+    if (this.damageMultiplier < 1) effects.push('weakened');
+    if (this.movementMultiplier < 1) effects.push('move-speed-down');
+    if (now < this.burnUntil) effects.push('burn');
+    if ((this.state === 'STUN' || this.state === 'HITSTUN') && now < this.stateUntil) {
+      effects.push('stun');
+    }
+    return effects;
+  }
+
   receiveHit(attacker: Fighter, now: number): boolean {
     const attack = attacker.currentAttack;
     if (!attack) return false;
@@ -460,17 +536,47 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   }
 
   receiveAttackSnapshot(attacker: Fighter, attack: ActiveAttack, now: number): boolean {
-    if (attack.hitTargets.has(this.playerNumber) || now < this.invulnerableUntil) return false;
-    attack.hitTargets.add(this.playerNumber);
-    return this.receiveDamage(
+    const punchRush = attack.config.id === 'fist-rush';
+    const rushTick = punchRush
+      ? Math.floor((now - attack.startedAt - attack.config.startupMs) / punchRushHitIntervalMs)
+      : -1;
+    const rushHitCount = punchRush ? punchRushHitCount(attack.sequence) : 0;
+    if (now < this.invulnerableUntil) return false;
+    if (punchRush) {
+      if (rushTick < 0
+        || rushTick >= rushHitCount
+        || attack.hitTicks.get(this.playerNumber) === rushTick) return false;
+      attack.hitTicks.set(this.playerNumber, rushTick);
+    } else {
+      if (attack.hitTargets.has(this.playerNumber)) return false;
+      attack.hitTargets.add(this.playerNumber);
+    }
+    const uppercut = attack.config.id === 'fist-uppercut';
+    const finisherPending = punchRush && attack.sequence >= 4 && rushTick === rushHitCount - 1;
+    const finalRushHit = punchRush && attack.sequence < 4 && rushTick === rushHitCount - 1;
+    const hit = this.receiveDamage(
       attack.config.damage,
-      attack.config.hitstunMs,
-      attack.config.knockbackX * attack.direction,
-      attack.config.knockbackY,
+      finisherPending
+        ? 340
+        : punchRush && !finalRushHit ? punchRushHitIntervalMs + 35 : attack.config.hitstunMs,
+      punchRush && !finalRushHit ? 0 : attack.config.knockbackX * attack.direction,
+      punchRush && !finalRushHit ? 0 : attack.config.knockbackY,
       now,
       attacker,
       attack.kind,
+      attack.config.id === 'minigun-burst',
     );
+    if (hit && uppercut && this.state !== 'KO') {
+      this.uppercutRiseLocked = true;
+      attacker.applyUppercutRecoil(attack.direction, now);
+    }
+    return hit;
+  }
+
+  private applyUppercutRecoil(direction: -1 | 1, now: number): void {
+    if (this.state === 'KO') return;
+    this.uppercutRecoilUntil = Math.max(this.uppercutRecoilUntil, now + 260);
+    this.setVelocityX(direction * -220);
   }
 
   receiveBonusHit(
@@ -481,9 +587,19 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     attacker: Fighter,
     stunMs = 160,
     attackKind?: AttackKind,
+    allowMovement = false,
   ): boolean {
     if (now < this.invulnerableUntil || this.state === 'KO') return false;
-    return this.receiveDamage(damage, stunMs, knockbackX, knockbackY, now, attacker, attackKind);
+    return this.receiveDamage(
+      damage,
+      stunMs,
+      knockbackX,
+      knockbackY,
+      now,
+      attacker,
+      attackKind,
+      allowMovement,
+    );
   }
 
   private receiveDamage(
@@ -494,19 +610,25 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     now: number,
     attacker: Fighter,
     attackKind?: AttackKind,
+    allowMovement = false,
   ): boolean {
     const appliedDamage = Math.max(0, damage * attacker.damageMultiplier);
     this.lastDamageTaken = appliedDamage;
     this.stats = applyDamage(this.stats, appliedDamage);
-    this.currentAttack = undefined;
-    this.swordSlamDescending = false;
-    this.swordSlamLockedUntil = 0;
-    this.bodyRef.setGravityY(0);
-    this.bufferedAttack = undefined;
-    this.setVelocity(knockbackX, knockbackY);
-    this.state = this.stats.health <= 0 ? 'KO' : 'HITSTUN';
-    this.stateUntil = now + hitstunMs;
-    if (this.state === 'KO') this.setVelocity(knockbackX * 1.2, Math.min(knockbackY, -300));
+    const defeated = this.stats.health <= 0;
+    if (!allowMovement || defeated) {
+      this.currentAttack = undefined;
+      this.swordSlamDescending = false;
+      this.swordSlamLockedUntil = 0;
+      this.uppercutRiseLocked = false;
+      this.uppercutRecoilUntil = 0;
+      this.bodyRef.setGravityY(0);
+      this.bufferedAttack = undefined;
+      this.setVelocity(knockbackX, knockbackY);
+      this.state = defeated ? 'KO' : 'HITSTUN';
+      this.stateUntil = now + hitstunMs;
+      if (defeated) this.setVelocity(knockbackX * 1.2, Math.min(knockbackY, -300));
+    }
     if (attacker.fighterConfig.id === 'fist') {
       const gain = attackKind === 'skill' ? 2 : attackKind === 'basic' ? 1 : 0;
       attacker.stats = addRage(attacker.stats, gain);
@@ -532,6 +654,8 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     this.currentAttack = undefined;
     this.swordSlamDescending = false;
     this.swordSlamLockedUntil = 0;
+    this.uppercutRiseLocked = false;
+    this.uppercutRecoilUntil = 0;
     this.bodyRef.setGravityY(0);
     this.state = 'STUN';
     this.stateUntil = Math.max(this.stateUntil, now + durationMs);
@@ -591,18 +715,184 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
 
   private updateWeaponPose(): void {
     const id = this.fighterConfig.id;
-    const idleAngles = { sword: -28, fist: -8, minigun: -4, clock: -18, plant: -20, rock: -34 };
-    const idleReach = { sword: 10, fist: 9, minigun: 7, clock: 9, plant: 9, rock: 8 };
+    const idleAngles = { sword: -28, fist: 12, minigun: 0, clock: -18, plant: -20, rock: -34 };
+    const idleReach = { sword: 10, fist: -3, minigun: 14, clock: 9, plant: 9, rock: 8 };
     let angle = idleAngles[id];
     let reach = idleReach[id];
-    let vertical = id === 'minigun' ? -25 : -23;
-    let weaponScale = id === 'rock' ? 0.94 : id === 'fist' ? 0.84 : 0.88;
+    // The flipped idle pose mounts the minigun above the fighter centre,
+    // with the grip pointing back toward the lower-left.
+    let vertical = id === 'minigun' ? -12 : id === 'fist' ? -10 : -23;
+    let weaponScale = id === 'rock'
+      ? 0.94
+      : id === 'fist'
+        ? 0.84
+        : id === 'minigun'
+          ? 0.616
+          : 0.88;
 
     if (id === 'sword' && this.scene.time.now < this.swordSlamLockedUntil) {
       angle = 132;
       reach = 38;
       vertical = -28;
       weaponScale = 1.05;
+    } else if (
+      id === 'fist'
+      && this.currentAttack?.kind === 'basic'
+    ) {
+      const attack = this.currentAttack;
+      const elapsed = this.scene.time.now - attack.startedAt;
+      const centerReach = 0;
+      const centerVertical = -22;
+      const textureForwardExtent = 27;
+      const hitboxEnd = attack.config.hitboxOffsetX + attack.config.hitboxWidth / 2;
+      const fullyExtendedReach = hitboxEnd - textureForwardExtent;
+
+      if (attack.phase === 'startup') {
+        const progress = Phaser.Math.Clamp(elapsed / attack.config.startupMs, 0, 1);
+        reach = Phaser.Math.Linear(idleReach.fist, centerReach, progress);
+        vertical = Phaser.Math.Linear(-10, centerVertical, progress);
+        angle = Phaser.Math.Linear(idleAngles.fist, 0, progress);
+        weaponScale *= Phaser.Math.Linear(1, 0.9, progress);
+      } else if (attack.phase === 'active') {
+        const progress = Phaser.Math.Clamp(
+          (elapsed - attack.config.startupMs) / attack.config.activeMs,
+          0,
+          1,
+        );
+        reach = Phaser.Math.Linear(centerReach, fullyExtendedReach, progress);
+        vertical = centerVertical;
+        angle = 0;
+        weaponScale *= Phaser.Math.Linear(0.9, 1.18, progress);
+      } else {
+        const progress = Phaser.Math.Clamp(
+          (elapsed - attack.config.startupMs - attack.config.activeMs)
+            / attack.config.recoveryMs,
+          0,
+          1,
+        );
+        reach = Phaser.Math.Linear(fullyExtendedReach, idleReach.fist, progress);
+        vertical = Phaser.Math.Linear(centerVertical, -10, progress);
+        angle = Phaser.Math.Linear(0, idleAngles.fist, progress);
+        weaponScale *= Phaser.Math.Linear(1.18, 1, progress);
+      }
+    } else if (
+      id === 'fist'
+      && this.currentAttack?.config.id === 'fist-uppercut'
+    ) {
+      const attack = this.currentAttack;
+      const elapsed = this.scene.time.now - attack.startedAt;
+      const path = [
+        { reach: -3, vertical: -10, angle: 12 },
+        { reach: 12, vertical: -12, angle: 4 },
+        { reach: 26, vertical: -26, angle: -18 },
+        { reach: 30, vertical: -43, angle: -38 },
+        { reach: 22, vertical: -66, angle: -58 },
+      ];
+      const samplePath = (progress: number) => {
+        const scaled = Phaser.Math.Clamp(progress, 0, 1) * (path.length - 1);
+        const index = Math.min(path.length - 2, Math.floor(scaled));
+        const localProgress = scaled - index;
+        return {
+          reach: Phaser.Math.Linear(path[index].reach, path[index + 1].reach, localProgress),
+          vertical: Phaser.Math.Linear(
+            path[index].vertical,
+            path[index + 1].vertical,
+            localProgress,
+          ),
+          angle: Phaser.Math.Linear(path[index].angle, path[index + 1].angle, localProgress),
+        };
+      };
+
+      if (attack.phase === 'startup') {
+        const progress = Phaser.Math.Clamp(elapsed / attack.config.startupMs, 0, 1);
+        const pose = samplePath(progress * 0.25);
+        ({ reach, vertical, angle } = pose);
+      } else if (attack.phase === 'active') {
+        const progress = Phaser.Math.Clamp(
+          (elapsed - attack.config.startupMs) / attack.config.activeMs,
+          0,
+          1,
+        );
+        const pose = samplePath(0.25 + progress * 0.75);
+        ({ reach, vertical, angle } = pose);
+        weaponScale *= Phaser.Math.Linear(1, 1.08, progress);
+      } else {
+        const progress = Phaser.Math.Clamp(
+          (elapsed - attack.config.startupMs - attack.config.activeMs)
+            / attack.config.recoveryMs,
+          0,
+          1,
+        );
+        reach = Phaser.Math.Linear(path[4].reach, idleReach.fist, progress);
+        vertical = Phaser.Math.Linear(path[4].vertical, -10, progress);
+        angle = Phaser.Math.Linear(path[4].angle, idleAngles.fist, progress);
+        weaponScale *= Phaser.Math.Linear(1.08, 1, progress);
+      }
+    } else if (
+      id === 'fist'
+      && this.currentAttack?.config.id === 'fist-rush'
+      && this.currentAttack.sequence >= 4
+      && this.currentAttack.phase === 'recovery'
+    ) {
+      const attack = this.currentAttack;
+      const elapsed = this.scene.time.now - attack.startedAt
+        - attack.config.startupMs - attack.config.activeMs;
+      const progress = Phaser.Math.Clamp(elapsed / attack.config.recoveryMs, 0, 1);
+      const textureForwardExtent = 27;
+      const hitboxEnd = attack.config.hitboxOffsetX + attack.config.hitboxWidth / 2;
+      const fullyExtendedReach = hitboxEnd - textureForwardExtent;
+      if (progress < 0.25) {
+        const summon = progress / 0.25;
+        reach = Phaser.Math.Linear(idleReach.fist, -26, summon);
+        vertical = Phaser.Math.Linear(-10, -28, summon);
+        angle = Phaser.Math.Linear(idleAngles.fist, -10, summon);
+        weaponScale *= Phaser.Math.Linear(0.25, 0.9, summon);
+      } else if (progress < 0.58) {
+        const strike = Phaser.Math.Easing.Cubic.Out((progress - 0.25) / 0.33);
+        reach = Phaser.Math.Linear(-26, fullyExtendedReach, strike);
+        vertical = Phaser.Math.Linear(-28, -22, strike);
+        angle = Phaser.Math.Linear(-10, 0, strike);
+        weaponScale *= Phaser.Math.Linear(0.9, 1.3, strike);
+      } else {
+        const recover = (progress - 0.58) / 0.42;
+        reach = Phaser.Math.Linear(fullyExtendedReach, idleReach.fist, recover);
+        vertical = Phaser.Math.Linear(-22, -10, recover);
+        angle = Phaser.Math.Linear(0, idleAngles.fist, recover);
+        weaponScale *= Phaser.Math.Linear(1.3, 1, recover);
+      }
+    } else if (
+      id === 'minigun'
+      && this.currentAttack?.kind === 'basic'
+    ) {
+      const attack = this.currentAttack;
+      const elapsed = this.scene.time.now - attack.startedAt;
+      if (attack.phase === 'startup') {
+        const progress = Phaser.Math.Clamp(elapsed / attack.config.startupMs, 0, 1);
+        reach = Phaser.Math.Linear(idleReach.minigun, 17, progress);
+        vertical = Phaser.Math.Linear(-12, -11, progress);
+        angle = Phaser.Math.Linear(idleAngles.minigun, 2, progress);
+      } else if (attack.phase === 'active') {
+        const progress = Phaser.Math.Clamp(
+          (elapsed - attack.config.startupMs) / attack.config.activeMs,
+          0,
+          1,
+        );
+        const recoil = Math.sin(progress * Math.PI * 8);
+        reach = 17.5 + recoil * 0.35;
+        vertical = -11 + recoil * 0.3;
+        angle = 2 + recoil * 0.5;
+        weaponScale *= 1.015;
+      } else {
+        const progress = Phaser.Math.Clamp(
+          (elapsed - attack.config.startupMs - attack.config.activeMs)
+            / attack.config.recoveryMs,
+          0,
+          1,
+        );
+        reach = Phaser.Math.Linear(17, idleReach.minigun, progress);
+        vertical = Phaser.Math.Linear(-11, -12, progress);
+        angle = Phaser.Math.Linear(2, idleAngles.minigun, progress);
+      }
     } else if (this.currentAttack) {
       const phase = this.currentAttack.phase;
       if (this.currentAttack.config.id === 'sword-slam') {
@@ -638,6 +928,11 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       } else if (this.currentAttack.kind === 'skill') {
         angle += id === 'clock' ? 22 : id === 'rock' ? 8 : 12;
       }
+    } else if (id === 'fist' && this.state === 'IDLE') {
+      const idleBob = Math.sin(this.scene.time.now / 220);
+      vertical += idleBob * 2;
+      reach += Math.cos(this.scene.time.now / 260) * 1.5;
+      angle += idleBob * 3;
     } else if (this.state === 'RUN') {
       angle += Math.sin(this.scene.time.now / 85) * 7;
       vertical += Math.sin(this.scene.time.now / 70) * 3;
@@ -655,9 +950,66 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       .setPosition(this.x + this.facing * reach, this.y + vertical)
       .setRotation(Phaser.Math.DegToRad(angle * this.facing))
       .setScale(this.facing * weaponScale, weaponScale)
+      .setFlipY(id === 'minigun')
       .setAlpha(this.alpha)
-      .setVisible(this.visible)
+      .setVisible(
+        this.visible
+        && (this.currentAttack?.config.id !== 'fist-rush'
+          || (this.currentAttack.sequence >= 4 && this.currentAttack.phase === 'recovery')),
+      )
       .clearTint()
-      .setTint(id === 'sword' ? 0xffffff : this.displayTint);
+      .setTint(
+        id === 'sword' || id === 'fist' || id === 'minigun'
+          ? 0xffffff
+          : this.displayTint,
+      );
+
+    if (this.minigunGrip) {
+      let gripAngle = 60;
+      let gripOffsetX = -5;
+      let gripOffsetY = 0;
+      if (this.currentAttack?.kind === 'basic') {
+        const attack = this.currentAttack;
+        const elapsed = this.scene.time.now - attack.startedAt;
+        if (attack.phase === 'startup') {
+          const progress = Phaser.Math.Clamp(elapsed / attack.config.startupMs, 0, 1);
+          gripAngle = Phaser.Math.Linear(60, 48, progress);
+          gripOffsetX = Phaser.Math.Linear(-5, -7, progress);
+          gripOffsetY = Phaser.Math.Linear(0, 1, progress);
+        } else if (attack.phase === 'active') {
+          const progress = Phaser.Math.Clamp(
+            (elapsed - attack.config.startupMs) / attack.config.activeMs,
+            0,
+            1,
+          );
+          gripAngle = 48 + Math.sin(progress * Math.PI * 8) * 1.2;
+          gripOffsetX = -7;
+          gripOffsetY = 1;
+        } else {
+          const progress = Phaser.Math.Clamp(
+            (elapsed - attack.config.startupMs - attack.config.activeMs)
+              / attack.config.recoveryMs,
+            0,
+            1,
+          );
+          gripAngle = Phaser.Math.Linear(48, 60, progress);
+          gripOffsetX = Phaser.Math.Linear(-7, -5, progress);
+          gripOffsetY = Phaser.Math.Linear(1, 0, progress);
+        }
+      }
+      this.minigunGrip
+        .setPosition(
+          this.weapon.x + this.facing * gripOffsetX,
+          this.weapon.y + gripOffsetY,
+        )
+        .setRotation(Phaser.Math.DegToRad(gripAngle * this.facing))
+        .setScale(this.facing * weaponScale, weaponScale)
+        .setFlipX(true)
+        .setFlipY(true)
+        .setAlpha(this.alpha)
+        .setVisible(this.visible)
+        .clearTint()
+        .setTint(0xffffff);
+    }
   }
 }
