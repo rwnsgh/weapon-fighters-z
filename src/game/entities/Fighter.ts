@@ -551,6 +551,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       if (attack.hitTargets.has(this.playerNumber)) return false;
       attack.hitTargets.add(this.playerNumber);
     }
+    if (attack.config.id === 'minigun-burst') return true;
     const uppercut = attack.config.id === 'fist-uppercut';
     const finisherPending = punchRush && attack.sequence >= 4 && rushTick === rushHitCount - 1;
     const finalRushHit = punchRush && attack.sequence < 4 && rushTick === rushHitCount - 1;
@@ -946,7 +947,13 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       reach = 5;
     }
 
+    const weaponTexture = id === 'minigun' && this.currentAttack?.kind === 'skill'
+      ? this.currentAttack.phase === 'active' ? 'minigun-skill-active' : 'minigun-skill-ready'
+      : `weapon-${id}`;
+    if (weaponTexture !== `weapon-${id}`) weaponScale = this.currentAttack?.phase === 'active' ? 0.15 : 0.14;
+
     this.weapon
+      .setTexture(weaponTexture)
       .setPosition(this.x + this.facing * reach, this.y + vertical)
       .setRotation(Phaser.Math.DegToRad(angle * this.facing))
       .setScale(this.facing * weaponScale, weaponScale)
@@ -1007,7 +1014,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
         .setFlipX(true)
         .setFlipY(true)
         .setAlpha(this.alpha)
-        .setVisible(this.visible)
+        .setVisible(this.visible && this.currentAttack?.kind !== 'skill')
         .clearTint()
         .setTint(0xffffff);
     }

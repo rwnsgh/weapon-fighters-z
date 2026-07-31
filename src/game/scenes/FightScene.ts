@@ -40,6 +40,26 @@ interface SwordUltimateFreeze {
   p2: { x: number; y: number };
 }
 
+interface GrappleVisual {
+  attacker: Fighter;
+  hook: Phaser.GameObjects.Image;
+  cables: Phaser.GameObjects.Image[];
+  startX: number;
+  startY: number;
+  targetX: number;
+  targetY: number;
+  startedAt: number;
+  duration: number;
+}
+
+interface MinigunBullet {
+  attacker: Fighter;
+  target: Fighter;
+  sprite: Phaser.GameObjects.Rectangle;
+  direction: -1 | 1;
+  maxX: number;
+}
+
 export class FightScene extends Phaser.Scene {
   private settings!: MatchSettings;
   private p1!: Fighter;
@@ -63,6 +83,8 @@ export class FightScene extends Phaser.Scene {
   private plantNodes: PlantNode[] = [];
   private swordTrailAt = new Map<number, number>();
   private swordUltimateFreeze?: SwordUltimateFreeze;
+  private grappleVisuals: GrappleVisual[] = [];
+  private minigunBullets: MinigunBullet[] = [];
 
   constructor() { super('FightScene'); }
 
@@ -74,6 +96,8 @@ export class FightScene extends Phaser.Scene {
     this.debugVisible = false;
     this.swordTrailAt.clear();
     this.swordUltimateFreeze = undefined;
+    this.grappleVisuals = [];
+    this.minigunBullets = [];
     this.pauseObjects = [];
     this.controlsBeforePause = [false, false];
     this.countdown = undefined;
@@ -159,6 +183,8 @@ export class FightScene extends Phaser.Scene {
 
   update(time: number, delta: number): void {
     if (this.isPaused) return;
+    this.updateGrappleVisuals(time);
+    this.updateMinigunBullets(delta);
     this.updatePlantAuras(time);
     const p1Move = {
       left: this.inputs.p1.left.isDown,
@@ -300,6 +326,8 @@ export class FightScene extends Phaser.Scene {
         this.attackVisual(fighter, kind);
       }
       if (fighter.fighterConfig.id === 'minigun' && kind === 'ultimate') this.spawnLaserBarrage(fighter);
+      if (fighter.fighterConfig.id === 'minigun' && kind === 'skill') this.spawnGrapplingHook(fighter);
+      if (fighter.fighterConfig.id === 'minigun' && kind === 'basic') this.spawnMinigunBurst(fighter);
       if (fighter.fighterConfig.id === 'clock' && kind === 'ultimate') this.startTimeStop(fighter);
       if (fighter.fighterConfig.id === 'plant' && kind === 'basic') this.waterSeeds(fighter);
       if (fighter.fighterConfig.id === 'plant' && kind === 'skill') this.plantSeed(fighter);
@@ -334,6 +362,7 @@ export class FightScene extends Phaser.Scene {
   }
 
   private onHit(attacker: Fighter, target: Fighter, attack: ActiveAttack): void {
+    if (attacker.fighterConfig.id === 'minigun' && attack.kind === 'basic') return;
     this.sounds.play('hit');
     this.cameras.main.shake(attack.config.hitstopMs + 25, attack.kind === 'ultimate' ? 0.008 : 0.0035);
     this.combat.showHitEffect(target.x, target.y - 48, attacker.fighterConfig.color);
@@ -360,8 +389,6 @@ export class FightScene extends Phaser.Scene {
           }
         });
       });
-    } else if (attacker.fighterConfig.id === 'minigun' && attack.kind === 'basic') {
-      this.continueBurst(attacker, target, attack);
     } else if (attacker.fighterConfig.id === 'plant' && attack.kind === 'basic') {
       this.continueWaterStream(attacker, target);
     } else if (attacker.fighterConfig.id === 'rock' && attack.kind === 'basic') {
@@ -374,26 +401,50 @@ export class FightScene extends Phaser.Scene {
     }
   }
 
-  private continueBurst(attacker: Fighter, target: Fighter, attack: ActiveAttack): void {
-    const shotCount = minigunBurstCount(attack.sequence);
-    for (let shot = 1; shot < shotCount; shot += 1) {
+  private spawnMinigunBurst(attacker: Fighter): void {
+    const target = attacker === this.p1 ? this.p2 : this.p1;
+    const shotCount = minigunBurstCount(attacker.currentAttack?.sequence ?? 1);
+    for (let shot = 0; shot < shotCount; shot += 1) {
       this.time.delayedCall(shot * 72, () => {
-        if (target.state === 'KO') return;
-        if (target.receiveBonusHit(
-          2,
-          0,
-          0,
-          this.time.now,
-          attacker,
-          0,
-          'basic',
-          true,
-        )) {
-          this.damageNumber(target.x, target.y - 82, target.lastDamageTaken);
-          this.combat.showHitEffect(target.x, target.y - 24, attacker.fighterConfig.color);
-        }
+        if (!attacker.active || attacker.state === 'KO') return;
+        const direction = attacker.facing;
+        const startX = attacker.x + direction * 72;
+        const maxX = Phaser.Math.Clamp(startX + direction * 756, 24, 1256);
+        const sprite = this.add.rectangle(startX, attacker.y - 33, 22, 8, 0xffffff, 1)
+          .setStrokeStyle(2, 0x111111, 1)
+          .setScale(direction, 1)
+          .setDepth(17);
+        this.minigunBullets.push({ attacker, target, sprite, direction, maxX });
       });
     }
+  }
+
+  private updateMinigunBullets(delta: number): void {
+    const speed = 760 * (2 / 3);
+    this.minigunBullets = this.minigunBullets.filter((bullet) => {
+      if (!bullet.sprite.active || bullet.target.state === 'KO') {
+        bullet.sprite.destroy();
+        return false;
+      }
+      bullet.sprite.x += bullet.direction * speed * (delta / 1000);
+      const hitbox = new Phaser.Geom.Rectangle(bullet.sprite.x - 11, bullet.sprite.y - 5, 22, 10);
+      if (Phaser.Geom.Intersects.RectangleToRectangle(hitbox, bullet.target.getHurtbox())) {
+        if (bullet.target.receiveBonusHit(2, bullet.direction * 45, -18, this.time.now, bullet.attacker, 90, 'basic', true)) {
+          this.damageNumber(bullet.target.x, bullet.target.y - 82, bullet.target.lastDamageTaken);
+          this.combat.showHitEffect(bullet.target.x, bullet.target.y - 24, bullet.attacker.fighterConfig.color);
+        }
+        bullet.sprite.destroy();
+        return false;
+      }
+      const outsideRange = bullet.direction === 1
+        ? bullet.sprite.x >= bullet.maxX
+        : bullet.sprite.x <= bullet.maxX;
+      if (outsideRange || bullet.sprite.x < 24 || bullet.sprite.x > 1256) {
+        bullet.sprite.destroy();
+        return false;
+      }
+      return true;
+    });
   }
 
   private continueWaterStream(attacker: Fighter, target: Fighter): void {
@@ -409,27 +460,83 @@ export class FightScene extends Phaser.Scene {
 
   private spawnLaserBarrage(attacker: Fighter): void {
     const target = attacker === this.p1 ? this.p2 : this.p1;
-    [0, 1000, 2000].forEach((delay, index) => {
+    [0, 700, 1400].forEach((delay, index) => {
       this.time.delayedCall(delay, () => {
         if (target.state === 'KO') return;
         const x = target.x;
-        const warning = this.add.rectangle(x, 350, 58, 560, 0xff5f74, 0.16)
+        const laserWidth = 42 * 2.5;
+        const warning = this.add.rectangle(x, 350, laserWidth, 560, 0xff5f74, 0.16)
           .setStrokeStyle(3, 0xffd3dd, 0.8).setDepth(17);
-        this.tweens.add({ targets: warning, alpha: 0.5, duration: 180, yoyo: true, repeat: 1 });
-        this.time.delayedCall(430, () => {
+        this.tweens.add({ targets: warning, alpha: 0.5, duration: 180, yoyo: true, repeat: 2 });
+        this.time.delayedCall(1200, () => {
           warning.destroy();
           if (target.state === 'KO') return;
-          const laser = this.add.rectangle(x, 345, 42, 570, 0xffffff, 0.92)
+          const laserDuration = 700;
+          const laser = this.add.rectangle(x, 345, laserWidth, 570, 0xffffff, 0.92)
             .setStrokeStyle(8, attacker.fighterConfig.color, 0.9).setDepth(22);
-          this.tweens.add({ targets: laser, alpha: 0, scaleX: 1.45, duration: 260, onComplete: () => laser.destroy() });
-          if (Math.abs(target.x - x) <= 48 && target.receiveBonusHit(
-            25, 0, -180, this.time.now, attacker, 380, 'ultimate',
-          )) {
-            this.damageNumber(target.x, target.y - 82, target.lastDamageTaken);
-            this.cameras.main.shake(120, 0.008 + index * 0.001);
+          this.tweens.add({ targets: laser, alpha: 0, scaleX: 1.08, duration: laserDuration, onComplete: () => laser.destroy() });
+          for (let tick = 1; tick <= laserDuration / 100; tick += 1) {
+            this.time.delayedCall(tick * 100, () => {
+              if (target.state === 'KO' || Math.abs(target.x - x) > laserWidth / 2) return;
+              if (target.receiveBonusHit(1, 0, 0, this.time.now, attacker, 100, 'ultimate')) {
+                this.damageNumber(target.x, target.y - 82, target.lastDamageTaken);
+                if (tick === 1) this.cameras.main.shake(120, 0.008 + index * 0.001);
+              }
+            });
           }
         });
       });
+    });
+  }
+
+  private spawnGrapplingHook(attacker: Fighter): void {
+    const target = attacker === this.p1 ? this.p2 : this.p1;
+    const startX = attacker.x + attacker.facing * 66;
+    const startY = attacker.y - 48;
+    const targetX = target.x;
+    const targetY = target.y - 44;
+    const distance = Phaser.Math.Distance.Between(startX, startY, targetX, targetY);
+    const duration = Math.max(120, (distance / (attacker.fighterConfig.moveSpeed * 3)) * 1000);
+    const angle = Phaser.Math.Angle.Between(startX, startY, targetX, targetY);
+    const hook = this.add.image(startX, startY, 'grapple-hook')
+      .setOrigin(0.08, 0.5).setScale(0.16).setRotation(angle).setDepth(19);
+    const cableCount = Math.max(1, Math.ceil(distance / 30));
+    const cables = Array.from({ length: cableCount }, () => this.add.image(startX, startY, 'grapple-cable')
+      .setOrigin(0.5).setScale(0.14).setRotation(angle).setDepth(18).setVisible(false));
+    this.grappleVisuals.push({ attacker, hook, cables, startX, startY, targetX, targetY, startedAt: this.time.now, duration });
+  }
+
+  private updateGrappleVisuals(now: number): void {
+    this.grappleVisuals = this.grappleVisuals.filter((visual) => {
+      const raw = Phaser.Math.Clamp((now - visual.startedAt) / visual.duration, 0, 1);
+      const progress = 1 - ((1 - raw) ** 3);
+      const dx = visual.targetX - visual.startX;
+      const dy = visual.targetY - visual.startY;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      const curve = Math.min(22, Math.max(8, distance * 0.05)) * visual.attacker.facing;
+      const px = distance === 0 ? 0 : -dy / distance;
+      const py = distance === 0 ? 0 : dx / distance;
+      const pointAt = (t: number) => ({
+        x: Phaser.Math.Linear(visual.startX, visual.targetX, t) + px * Math.sin(t * Math.PI) * curve,
+        y: Phaser.Math.Linear(visual.startY, visual.targetY, t) + py * Math.sin(t * Math.PI) * curve,
+      });
+      const point = pointAt(progress);
+      const next = pointAt(Math.min(1, progress + 0.01));
+      visual.hook.setPosition(point.x, point.y).setRotation(Phaser.Math.Angle.Between(point.x, point.y, next.x, next.y));
+      visual.cables.forEach((cable, index) => {
+        const t = (index + 0.5) / visual.cables.length;
+        const cablePoint = pointAt(t);
+        const cableNext = pointAt(Math.min(1, t + 0.01));
+        cable.setVisible(t <= progress);
+        if (t <= progress) cable.setPosition(cablePoint.x, cablePoint.y)
+          .setRotation(Phaser.Math.Angle.Between(cablePoint.x, cablePoint.y, cableNext.x, cableNext.y));
+      });
+      if (raw >= 1) {
+        visual.hook.destroy();
+        visual.cables.forEach((cable) => cable.destroy());
+        return false;
+      }
+      return true;
     });
   }
 
@@ -727,56 +834,6 @@ export class FightScene extends Phaser.Scene {
       return;
     }
     if (fighter.fighterConfig.id === 'minigun') {
-      if (kind === 'ultimate') return;
-      if (kind === 'skill') {
-        const hookX = fighter.x + fighter.facing * 330;
-        const chain = this.add.rectangle(
-          fighter.x + fighter.facing * 170,
-          fighter.y - 32,
-          320,
-          4,
-          0xc6f5ff,
-          0.85,
-        ).setDepth(16);
-        const hook = this.add.circle(hookX, fighter.y - 32, 12, color, 0.95)
-          .setStrokeStyle(4, 0xffffff, 0.8).setDepth(17);
-        this.tweens.add({
-          targets: [chain, hook],
-          alpha: 0,
-          duration: 280,
-          onComplete: () => { chain.destroy(); hook.destroy(); },
-        });
-        return;
-      }
-      const sequence = fighter.currentAttack?.sequence ?? 1;
-      const count = minigunBurstCount(sequence);
-      for (let index = 0; index < count; index += 1) {
-        this.time.delayedCall(index * 66, () => {
-          const bulletBorder = this.add.rectangle(
-            fighter.x + fighter.facing * 60,
-            fighter.y - 33 + (index % 2) * 4,
-            20,
-            7,
-            0x111111,
-            0.98,
-          ).setDepth(16);
-          const bulletCore = this.add.rectangle(
-            bulletBorder.x,
-            bulletBorder.y,
-            14,
-            3,
-            index % 2 ? 0xffffff : color,
-            0.95,
-          ).setDepth(17);
-          this.tweens.add({
-            targets: [bulletBorder, bulletCore],
-            x: bulletBorder.x + fighter.facing * 756,
-            alpha: 0,
-            duration: 249,
-            onComplete: () => { bulletBorder.destroy(); bulletCore.destroy(); },
-          });
-        });
-      }
       return;
     }
     if (fighter.fighterConfig.id === 'clock') {
