@@ -1,6 +1,8 @@
 import Phaser from 'phaser';
 import type { RoundResult } from '../data/types';
-import { addBackdrop, addButton, addPanel, palette } from '../ui/ui';
+import {
+  addBackdrop, addButton, addPanel, fontBody, fontDisplay, fontTech, palette,
+} from '../ui/ui';
 
 interface MatchResult {
   winner: RoundResult;
@@ -20,10 +22,11 @@ export class ResultScene extends Phaser.Scene {
     const title = result.winner === 'draw' ? '무승부' : `${result.winner === 'p1' ? '1P' : '2P'} 승리`;
     addPanel(this, 640, 255, 940, 350, result.winner === 'draw' ? palette.gold : palette.cyan, 0.9);
     this.add.text(640, 125, 'BATTLE RESULT', {
-      fontSize: '19px', color: '#ffcf6e', letterSpacing: 7,
+      fontFamily: fontTech, fontStyle: 'bold', fontSize: '17px',
+      color: '#ffcf6e', letterSpacing: 5,
     }).setOrigin(0.5);
     this.add.text(640, 215, title, {
-      fontFamily: 'Arial Black, sans-serif', fontSize: '72px', color: '#ffffff',
+      fontFamily: fontDisplay, fontStyle: 'bold', fontSize: '64px', color: '#ffffff',
       stroke: '#20102a', strokeThickness: 12,
     }).setOrigin(0.5);
     const history = result.history.map((round, index) => {
@@ -31,10 +34,11 @@ export class ResultScene extends Phaser.Scene {
       return `ROUND ${index + 1}  ${label}`;
     }).join('   ·   ');
     this.add.text(640, 290, history, {
-      fontSize: '18px', color: '#bdc7ee', align: 'center', wordWrap: { width: 950 },
+      fontFamily: fontBody, fontSize: '16px', color: '#bdc7ee',
+      align: 'center', wordWrap: { width: 950 },
     }).setOrigin(0.5);
     this.add.text(640, 334, `FINAL SCORE   ${result.p1Wins}  —  ${result.p2Wins}`, {
-      fontFamily: 'Arial Black, sans-serif', fontSize: '20px', color: '#ffe78a',
+      fontFamily: fontTech, fontStyle: 'bold', fontSize: '19px', color: '#ffe78a',
     }).setOrigin(0.5);
     const rematch = () => {
       this.registry.remove('resumeRounds');

@@ -28,8 +28,46 @@ describe('fighter roster', () => {
     expect(fighters.sword.skill).toMatchObject({ damage: 20, manaCost: 30 });
     expect(fighters.sword.ultimate).toMatchObject({ damage: 10, manaCost: 75 });
     expect(fighters.fist.basicAttack.damage).toBe(10);
-    expect(fighters.fist.skill).toMatchObject({ damage: 20, manaCost: 25 });
+    expect(fighters.fist.skill).toMatchObject({
+      damage: 20,
+      manaCost: 25,
+      startupMs: 0,
+      knockbackY: -1160,
+      lungeVelocity: 90,
+    });
     expect(fighters.fist.ultimate.manaCost).toBe(60);
+    expect(fighters.fist.ultimate.hitstunMs).toBe(500);
+  });
+
+  it('keeps the revised proposal values for the four completed fighters', () => {
+    expect(fighters.minigun.basicAttack.damage).toBe(2);
+    expect(fighters.minigun.basicAttack).toMatchObject({
+      hitboxWidth: 648,
+      hitboxOffsetX: 334,
+      hitstunMs: 0,
+      knockbackX: 0,
+      knockbackY: 0,
+      lungeVelocity: 0,
+    });
+    expect(fighters.minigun.ultimate.manaCost).toBe(80);
+    expect(fighters.clock.basicAttack.damage).toBe(3);
+    expect(fighters.clock.skill.manaCost).toBe(20);
+    expect(fighters.clock.ultimate.manaCost).toBe(90);
+    expect(fighters.plant.skill.manaCost).toBe(20);
+    expect(fighters.plant.ultimate.manaCost).toBe(80);
+    expect(fighters.rock.basicAttack.damage).toBe(7);
+    expect(fighters.rock.skill.manaCost).toBe(30);
+    expect(fighters.rock.ultimate.manaCost).toBe(60);
+  });
+
+  it.each(Object.values(fighters))('$name can reach every intended void platform step', (fighter) => {
+    const gravity = 1650;
+    const apexHeight = fighter.jumpVelocity ** 2 / (2 * gravity);
+    const fullAirTime = (2 * fighter.jumpVelocity) / gravity;
+    const horizontalReach = fighter.moveSpeed * fullAirTime;
+    expect(apexHeight).toBeGreaterThanOrEqual(148);
+    expect(apexHeight).toBeLessThan(160);
+    expect(horizontalReach).toBeGreaterThan(220);
   });
 
   it('keeps the revised proposal values for the four completed fighters', () => {

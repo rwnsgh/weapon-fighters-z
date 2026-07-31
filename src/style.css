@@ -1,7 +1,15 @@
+@font-face {
+  font-family: 'WFZ Sans';
+  src: url('/fonts/NotoSansKR-VF.ttf') format('truetype');
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: block;
+}
+
 :root {
   color: #f8fbff;
   background: #050711;
-  font-family: Inter, Pretendard, system-ui, sans-serif;
+  font-family: 'WFZ Sans', 'Noto Sans KR', 'Malgun Gothic', sans-serif;
   font-synthesis: none;
 }
 

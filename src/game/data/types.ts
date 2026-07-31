@@ -25,6 +25,8 @@ export interface AttackConfig {
 export interface FighterConfig {
   id: FighterId;
   name: string;
+  title: string;
+  role: string;
   style: string;
   color: number;
   alternateColor: number;
