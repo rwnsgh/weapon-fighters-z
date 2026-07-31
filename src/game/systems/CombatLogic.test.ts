@@ -8,6 +8,7 @@ import {
   determineRoundResult,
   punchRushDamage,
   regenerateMana,
+  shouldApplyInterruptedTrade,
   spendMana,
   type CombatantStats,
 } from './CombatLogic';
@@ -67,5 +68,11 @@ describe('combat calculations', () => {
 
   it('applies 15 void-fall damage', () => {
     expect(applyVoidFall(stats({ health: 34 })).health).toBe(19);
+  });
+
+  it('only preserves a simultaneous trade when the sampled attack was interrupted', () => {
+    expect(shouldApplyInterruptedTrade(true, false)).toBe(true);
+    expect(shouldApplyInterruptedTrade(true, true)).toBe(false);
+    expect(shouldApplyInterruptedTrade(false, false)).toBe(false);
   });
 });

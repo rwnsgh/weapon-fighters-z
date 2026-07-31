@@ -52,3 +52,10 @@ export function determineRoundResult(p1Health: number, p2Health: number): RoundR
 export function applyVoidFall(stats: CombatantStats): CombatantStats {
   return applyDamage(stats, 15);
 }
+
+export function shouldApplyInterruptedTrade(
+  attackWasSampled: boolean,
+  attackStillActive: boolean,
+): boolean {
+  return attackWasSampled && !attackStillActive;
+}

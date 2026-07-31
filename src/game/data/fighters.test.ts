@@ -14,8 +14,10 @@ describe('fighter roster', () => {
   });
 
   it.each(Object.values(fighters))('$name uses the shared health and mana rules', (fighter) => {
-    expect(fighter.maxHealth).toBe(100);
+    expect(fighter.maxHealth).toBe(150);
     expect(fighter.maxMana).toBe(100);
+    expect(fighter.startMana).toBe(100);
+    expect(fighter.manaRegen).toBe(5);
     expect(fighter.basicAttack.manaCost).toBe(0);
     expect(fighter.skill.manaCost).toBeGreaterThan(0);
     expect(fighter.ultimate.manaCost).toBeGreaterThan(fighter.skill.manaCost);
@@ -24,9 +26,22 @@ describe('fighter roster', () => {
   it('keeps the proposal values for sword and fist', () => {
     expect(fighters.sword.basicAttack.damage).toBe(7);
     expect(fighters.sword.skill).toMatchObject({ damage: 20, manaCost: 30 });
-    expect(fighters.sword.ultimate.manaCost).toBe(75);
+    expect(fighters.sword.ultimate).toMatchObject({ damage: 10, manaCost: 75 });
     expect(fighters.fist.basicAttack.damage).toBe(10);
     expect(fighters.fist.skill).toMatchObject({ damage: 20, manaCost: 25 });
     expect(fighters.fist.ultimate.manaCost).toBe(60);
+  });
+
+  it('keeps the revised proposal values for the four completed fighters', () => {
+    expect(fighters.minigun.basicAttack.damage).toBe(2);
+    expect(fighters.minigun.ultimate.manaCost).toBe(80);
+    expect(fighters.clock.basicAttack.damage).toBe(3);
+    expect(fighters.clock.skill.manaCost).toBe(20);
+    expect(fighters.clock.ultimate.manaCost).toBe(90);
+    expect(fighters.plant.skill.manaCost).toBe(20);
+    expect(fighters.plant.ultimate.manaCost).toBe(80);
+    expect(fighters.rock.basicAttack.damage).toBe(7);
+    expect(fighters.rock.skill.manaCost).toBe(30);
+    expect(fighters.rock.ultimate.manaCost).toBe(60);
   });
 });

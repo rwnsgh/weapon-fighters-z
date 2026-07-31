@@ -9,10 +9,14 @@ export class FightHUD {
   private readonly p2Rage: Phaser.GameObjects.Text;
   private readonly p1Value: Phaser.GameObjects.Text;
   private readonly p2Value: Phaser.GameObjects.Text;
-  private p1Trail = 100;
-  private p2Trail = 100;
+  private readonly p1Stacks: Phaser.GameObjects.Image[] = [];
+  private readonly p2Stacks: Phaser.GameObjects.Image[] = [];
+  private p1Trail: number;
+  private p2Trail: number;
 
   constructor(scene: Phaser.Scene, p1: Fighter, p2: Fighter) {
+    this.p1Trail = p1.stats.maxHealth;
+    this.p2Trail = p2.stats.maxHealth;
     this.graphics = scene.add.graphics().setDepth(50);
     scene.add.circle(57, 69, 47, 0x0b1024, 0.96).setStrokeStyle(4, p1.fighterConfig.color).setDepth(50);
     scene.add.circle(1223, 69, 47, 0x0b1024, 0.96).setStrokeStyle(4, p2.fighterConfig.color).setDepth(50);
@@ -45,19 +49,25 @@ export class FightHUD {
       fontFamily: 'Arial Black, sans-serif', fontSize: '12px', color: '#8ca0d4',
       backgroundColor: '#091022cc', padding: { x: 9, y: 5 },
     }).setOrigin(0.5, 0).setDepth(51);
+    for (let index = 0; index < 4; index += 1) {
+      this.p1Stacks.push(scene.add.image(0, 0, 'weapon-fist').setScale(0.22).setDepth(52).setVisible(false));
+      this.p2Stacks.push(scene.add.image(0, 0, 'weapon-fist').setScale(-0.22, 0.22).setDepth(52).setVisible(false));
+    }
   }
 
   update(p1: Fighter, p2: Fighter, rounds: RoundManager, now: number): void {
     this.p1Trail = Phaser.Math.Linear(this.p1Trail, p1.stats.health, 0.06);
     this.p2Trail = Phaser.Math.Linear(this.p2Trail, p2.stats.health, 0.06);
     this.graphics.clear();
-    this.drawBars(110, 51, p1.stats.health, this.p1Trail, p1.stats.mana, p1.manaFlashUntil > now, false);
-    this.drawBars(1170, 51, p2.stats.health, this.p2Trail, p2.stats.mana, p2.manaFlashUntil > now, true);
+    this.drawBars(110, 51, p1.stats.health, this.p1Trail, p1.stats.maxHealth, p1.stats.mana, p1.manaFlashUntil > now, false);
+    this.drawBars(1170, 51, p2.stats.health, this.p2Trail, p2.stats.maxHealth, p2.stats.mana, p2.manaFlashUntil > now, true);
     this.center.setText(
       `ROUND ${rounds.round}\n${rounds.mode === 'bestOf3' ? `${rounds.p1Wins}  —  ${rounds.p2Wins}` : 'FINAL ROUND'}`,
     );
-    this.p1Rage.setText(p1.fighterConfig.id === 'fist' ? `투지 ${'◆'.repeat(p1.stats.rage)}${'◇'.repeat(4 - p1.stats.rage)}` : '');
-    this.p2Rage.setText(p2.fighterConfig.id === 'fist' ? `투지 ${'◆'.repeat(p2.stats.rage)}${'◇'.repeat(4 - p2.stats.rage)}` : '');
+    this.p1Rage.setText(p1.fighterConfig.id === 'clock' ? `시간 스택 ${p1.stats.rage}/4` : '');
+    this.p2Rage.setText(p2.fighterConfig.id === 'clock' ? `시간 스택 ${p2.stats.rage}/4` : '');
+    this.updateFistStacks(this.p1Stacks, p1);
+    this.updateFistStacks(this.p2Stacks, p2);
     this.p1Value.setText(`${Math.ceil(p1.stats.health)}`);
     this.p2Value.setText(`${Math.ceil(p2.stats.health)}`);
   }
@@ -67,19 +77,37 @@ export class FightHUD {
     y: number,
     health: number,
     trail: number,
+    maxHealth: number,
     mana: number,
     manaFlash: boolean,
     reverse: boolean,
   ): void {
     const width = 380;
     const origin = reverse ? x - width : x;
+    const healthRatio = Phaser.Math.Clamp(health / maxHealth, 0, 1);
+    const trailRatio = Phaser.Math.Clamp(trail / maxHealth, 0, 1);
     this.graphics.fillStyle(0x070916, 0.9).fillRoundedRect(origin - 4, y - 4, width + 8, 30, 6);
     this.graphics.fillStyle(0xffa44f, 0.55)
-      .fillRect(reverse ? x - width * trail / 100 : x, y, width * trail / 100, 22);
-    this.graphics.fillStyle(health > 35 ? 0x55e28c : 0xff5b62)
-      .fillRect(reverse ? x - width * health / 100 : x, y, width * health / 100, 22);
+      .fillRect(reverse ? x - width * trailRatio : x, y, width * trailRatio, 22);
+    this.graphics.fillStyle(healthRatio > 0.35 ? 0x55e28c : 0xff5b62)
+      .fillRect(reverse ? x - width * healthRatio : x, y, width * healthRatio, 22);
     this.graphics.fillStyle(0x080b18).fillRoundedRect(origin, y + 32, width, 13, 4);
     this.graphics.fillStyle(manaFlash ? 0xffffff : mana >= 60 ? 0xb06cff : 0x4ba8ff)
       .fillRoundedRect(reverse ? x - width * mana / 100 : x, y + 32, width * mana / 100, 13, 4);
+  }
+
+  private updateFistStacks(icons: Phaser.GameObjects.Image[], fighter: Fighter): void {
+    icons.forEach((icon, index) => {
+      const visible = fighter.fighterConfig.id === 'fist';
+      icon.setVisible(visible);
+      if (!visible) return;
+      const direction = fighter.playerNumber === 1 ? 1 : -1;
+      icon
+        .setPosition(fighter.x + (index - 1.5) * 18, fighter.y - 72)
+        .clearTint()
+        .setTint(index < fighter.stats.rage ? 0xff9f31 : 0xc9cedc)
+        .setAlpha(index < fighter.stats.rage ? 1 : 0.55)
+        .setScale(direction * 0.22, 0.22);
+    });
   }
 }

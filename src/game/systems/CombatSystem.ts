@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { Fighter, type ActiveAttack } from '../entities/Fighter';
+import { shouldApplyInterruptedTrade } from './CombatLogic';
 
 export class CombatSystem {
   constructor(
@@ -16,9 +17,9 @@ export class CombatSystem {
 
     if (p1WillHit && p1Attack && p2.receiveHit(p1, now)) this.onHit(p1, p2, p1Attack);
     if (p2WillHit && p2Attack) {
-      if (p2.currentAttack && p1.receiveHit(p2, now)) {
-        this.onHit(p2, p1, p2Attack);
-      } else {
+      if (p2.currentAttack) {
+        if (p1.receiveHit(p2, now)) this.onHit(p2, p1, p2Attack);
+      } else if (shouldApplyInterruptedTrade(Boolean(p2Attack), Boolean(p2.currentAttack))) {
         // The first collision may have interrupted P2's attack. Because both
         // overlaps were sampled in the same physics tick, preserve the trade.
         const traded = p1.receiveBonusHit(
