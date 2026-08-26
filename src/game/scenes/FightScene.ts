@@ -609,7 +609,7 @@ export class FightScene extends Phaser.Scene {
     const targetX = target.x;
     const targetY = target.y - 46;
     const distance = Phaser.Math.Distance.Between(startX, startY, targetX, targetY);
-    const duration = Math.max(180, (distance / (attacker.fighterConfig.moveSpeed * 3)) * 1000);
+    const duration = Math.max(180, (distance / (attacker.fighterConfig.moveSpeed * 2)) * 1000);
     const hook = this.add.image(startX, startY, 'grapple-hook')
       .setOrigin(0.08, 0.5)
       .setScale(0.16)
