@@ -33,6 +33,10 @@ export const combatTuning = {
   swordUltimateHitMs: 685,
   swordUltimateTrailWidth: 6,
   swordUltimateTitleHoldMs: 670,
+  minigunUltimateLaserCount: 3,
+  minigunUltimateLaserWarningMs: 800,
+  minigunUltimateLaserDurationMs: 2000,
+  minigunUltimateLaserGapMs: 1000,
   voidFallDamage: 15,
   voidRespawnInvulnerabilityMs: 1000,
 } as const;

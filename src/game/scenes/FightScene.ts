@@ -342,6 +342,33 @@ export class FightScene extends Phaser.Scene {
     }
   }
 
+  private updateMinigunBullets(delta: number): void {
+    const speed = 760 * (2 / 3 + 0.3);
+    this.minigunBullets = this.minigunBullets.filter((bullet) => {
+      if (!bullet.sprite.active || bullet.target.state === 'KO') {
+        bullet.sprite.destroy();
+        return false;
+      }
+      bullet.sprite.x += bullet.direction * speed * (delta / 1000);
+      const hitbox = new Phaser.Geom.Rectangle(bullet.sprite.x - 11, bullet.sprite.y - 5, 22, 10);
+      if (Phaser.Geom.Intersects.RectangleToRectangle(hitbox, bullet.target.getHurtbox())) {
+        if (bullet.target.receiveBonusHit(2, bullet.direction * 45, -18, this.time.now, bullet.attacker, 90, 'basic', true)) {
+          this.damageNumber(bullet.target.x, bullet.target.y - 82, bullet.target.lastDamageTaken);
+          this.combat.showHitEffect(bullet.target.x, bullet.target.y - 24, bullet.attacker.fighterConfig.color);
+        }
+        bullet.sprite.destroy();
+        return false;
+      }
+      const outsideRange = bullet.direction === 1
+        ? bullet.sprite.x >= bullet.maxX
+        : bullet.sprite.x <= bullet.maxX;
+      if (outsideRange || bullet.sprite.x < 24 || bullet.sprite.x > 1256) {
+        bullet.sprite.destroy();
+        return false;
+      }
+      return true;
+    });
+}
   private continueWaterStream(attacker: Fighter, target: Fighter): void {
     for (let particle = 1; particle < 10; particle += 1) {
       this.time.delayedCall(particle * 58, () => {
@@ -355,28 +382,86 @@ export class FightScene extends Phaser.Scene {
 
   private spawnLaserBarrage(attacker: Fighter): void {
     const target = attacker === this.p1 ? this.p2 : this.p1;
-    [0, 1000, 2000].forEach((delay, index) => {
-      this.time.delayedCall(delay, () => {
-        if (target.state === 'KO') return;
-        const x = target.x;
-        const warning = this.add.rectangle(x, 350, 58, 560, 0xff5f74, 0.16)
-          .setStrokeStyle(3, 0xffd3dd, 0.8).setDepth(17);
-        this.tweens.add({ targets: warning, alpha: 0.5, duration: 180, yoyo: true, repeat: 1 });
-        this.time.delayedCall(430, () => {
-          warning.destroy();
-          if (target.state === 'KO') return;
-          const laser = this.add.rectangle(x, 345, 42, 570, 0xffffff, 0.92)
-            .setStrokeStyle(8, attacker.fighterConfig.color, 0.9).setDepth(22);
-          this.tweens.add({ targets: laser, alpha: 0, scaleX: 1.45, duration: 260, onComplete: () => laser.destroy() });
-          if (Math.abs(target.x - x) <= 48 && target.receiveBonusHit(
-            25, 0, -180, this.time.now, attacker, 380, 'ultimate',
-          )) {
-            this.damageNumber(target.x, target.y - 82, target.lastDamageTaken);
-            this.cameras.main.shake(120, 0.008 + index * 0.001);
-          }
-        });
+    const laserWidth = 42 * 2.5;
+    const minX = laserWidth / 2 + 12;
+    const maxX = 1280 - laserWidth / 2 - 12;
+    const warningMs = combatTuning.minigunUltimateLaserWarningMs;
+    const laserDuration = combatTuning.minigunUltimateLaserDurationMs;
+    const gapMs = combatTuning.minigunUltimateLaserGapMs;
+
+    const fireLaser = (index: number): void => {
+      if (target.state === 'KO' || !attacker.active || attacker.state === 'KO') return;
+
+      // Each laser starts at a random visible point and rotates toward the
+      // enemy once at firing time. The fired laser then stays locked there.
+      const originX = Phaser.Math.Between(minX, maxX);
+      const originY = 80;
+      const aimedX = Phaser.Math.Clamp(target.x, minX, maxX);
+      const aimedY = Phaser.Math.Clamp(target.y - 30, 40, 680);
+      const warning = this.add.rectangle(originX, 350, laserWidth, 560, 0xff5f74, 0.16)
+        .setStrokeStyle(3, 0xffd3dd, 0.8).setDepth(17);
+      this.tweens.add({
+        targets: warning,
+        alpha: 0.5,
+        duration: warningMs / 6,
+        yoyo: true,
+        repeat: 2,
       });
-    });
+
+      this.time.delayedCall(warningMs, () => {
+        if (warning.active) warning.destroy();
+        if (target.state === 'KO' || !attacker.active || attacker.state === 'KO') return;
+
+        const laserLength = 1140;
+        const beamAngle = Phaser.Math.Angle.Between(originX, originY, aimedX, aimedY);
+        const laserCenterX = (originX + aimedX) / 2;
+        const laserCenterY = (originY + aimedY) / 2;
+        const laser = this.add.rectangle(laserCenterX, laserCenterY, laserWidth, laserLength, 0xffffff, 0.92)
+          .setRotation(beamAngle - Math.PI / 2)
+          .setStrokeStyle(8, attacker.fighterConfig.color, 0.9).setDepth(22);
+        this.tweens.add({
+          targets: laser,
+          alpha: 0,
+          scaleX: 1.08,
+          duration: laserDuration,
+          onComplete: () => laser.destroy(),
+        });
+        for (let tick = 1; tick <= laserDuration / 100; tick += 1) {
+          this.time.delayedCall(tick * 100, () => {
+            if (target.state === 'KO') return;
+            const beamHalfLength = laserLength / 2;
+            const beamStartX = laserCenterX - Math.cos(beamAngle) * beamHalfLength;
+            const beamStartY = laserCenterY - Math.sin(beamAngle) * beamHalfLength;
+            const beamEndX = laserCenterX + Math.cos(beamAngle) * beamHalfLength;
+            const beamEndY = laserCenterY + Math.sin(beamAngle) * beamHalfLength;
+            const beamDX = beamEndX - beamStartX;
+            const beamDY = beamEndY - beamStartY;
+            const beamLengthSquared = beamDX * beamDX + beamDY * beamDY;
+            const targetX = target.x;
+            const targetY = target.y - 30;
+            const projection = Phaser.Math.Clamp(
+              ((targetX - beamStartX) * beamDX + (targetY - beamStartY) * beamDY) / beamLengthSquared,
+              0,
+              1,
+            );
+            const closestX = beamStartX + beamDX * projection;
+            const closestY = beamStartY + beamDY * projection;
+            if (Phaser.Math.Distance.Between(targetX, targetY, closestX, closestY) > laserWidth / 2) return;
+            if (target.receiveBonusHit(1, 0, 0, this.time.now, attacker, 100, 'ultimate')) {
+              this.damageNumber(target.x, target.y - 82, target.lastDamageTaken);
+              if (tick === 1) this.cameras.main.shake(120, 0.008 + index * 0.001);
+            }
+          });
+        }
+
+        if (index + 1 < combatTuning.minigunUltimateLaserCount) {
+          const nextWarningDelay = Math.max(0, laserDuration + gapMs - warningMs);
+          this.time.delayedCall(nextWarningDelay, () => fireLaser(index + 1));
+        }
+      });
+    };
+
+    fireLaser(0);
   }
 
   private startTimeStop(attacker: Fighter): void {

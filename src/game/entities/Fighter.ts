@@ -499,19 +499,13 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       reach = 5;
     }
 
-    const skillTexture = this.fighterConfig.id === 'minigun' && this.currentAttack?.kind === 'skill'
-      ? this.currentAttack.phase === 'active' ? 'minigun-skill-active' : 'minigun-skill-ready'
-      : `weapon-${this.fighterConfig.id}`;
-    const isSkillTexture = skillTexture !== `weapon-${this.fighterConfig.id}`;
-    const textureScale = isSkillTexture
-      ? (this.currentAttack?.phase === 'active' ? 0.15 : 0.14)
-      : weaponScale;
+    const weaponTexture = `weapon-${id}`;
 
     this.weapon
-      .setTexture(skillTexture)
+      .setTexture(weaponTexture)
       .setPosition(this.x + this.facing * reach, this.y + vertical)
       .setRotation(Phaser.Math.DegToRad(angle * this.facing))
-      .setScale(this.facing * textureScale, textureScale)
+      .setScale(this.facing * weaponScale, weaponScale)
       .setAlpha(this.alpha)
       .setVisible(this.visible)
       .clearTint()
