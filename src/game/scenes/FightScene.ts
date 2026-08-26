@@ -309,6 +309,10 @@ export class FightScene extends Phaser.Scene {
       this.rushVisual(target, attacker.fighterConfig.color);
     } else if (attacker.fighterConfig.id === 'minigun' && attack.kind === 'basic') {
       this.continueBurst(attacker, target, attack);
+    } else if (attacker.fighterConfig.id === 'minigun' && attack.kind === 'skill') {
+      const pullDistance = target.getHurtbox().width * 1.5;
+      target.x = attacker.x + attacker.facing * pullDistance;
+      target.applyStun(this.time.now, 1000);
     } else if (attacker.fighterConfig.id === 'plant' && attack.kind === 'basic') {
       this.continueWaterStream(attacker, target);
     } else if (attacker.fighterConfig.id === 'rock' && attack.kind === 'basic') {
@@ -369,6 +373,12 @@ export class FightScene extends Phaser.Scene {
       return true;
     });
 }
+  private spawnMinigunBullet(attacker: Fighter, shot: number): void {
+    const bullet = this.add.image(attacker.x + attacker.facing * 66, attacker.y - 55 + ((shot % 3) - 1) * 5, 'minigun-bullet')
+      .setOrigin(0.15, 0.5).setScale(attacker.facing * 0.8, 0.8).setDepth(20);
+    this.tweens.add({ targets: bullet, x: bullet.x + attacker.facing * 380, alpha: 0, duration: 175, ease: 'Linear', onComplete: () => bullet.destroy() });
+  }
+
   private continueWaterStream(attacker: Fighter, target: Fighter): void {
     for (let particle = 1; particle < 10; particle += 1) {
       this.time.delayedCall(particle * 58, () => {
@@ -699,24 +709,8 @@ export class FightScene extends Phaser.Scene {
     }
     if (fighter.fighterConfig.id === 'minigun') {
       if (kind === 'skill') return;
-      const count = kind === 'ultimate' ? 9 : kind === 'skill' ? 6 : 3;
-      for (let index = 0; index < count; index += 1) {
-        const bullet = this.add.rectangle(
-          fighter.x + fighter.facing * (70 + index * 34),
-          fighter.y - 53 + (index % 2) * 8,
-          kind === 'ultimate' ? 30 : 20,
-          7,
-          index % 2 ? 0xffffff : color,
-          0.9,
-        ).setDepth(16);
-        this.tweens.add({
-          targets: bullet,
-          x: bullet.x + fighter.facing * 95,
-          alpha: 0,
-          duration: 320 + index * 24,
-          onComplete: () => bullet.destroy(),
-        });
-      }
+      const count = kind === 'ultimate' ? 9 : (fighter.currentAttack?.sequence ?? 1) % 3 === 0 ? 6 : 4;
+      for (let index = 0; index < count; index += 1) this.time.delayedCall(index * 72, () => this.spawnMinigunBullet(fighter, index));
       return;
     }
     if (fighter.fighterConfig.id === 'clock') {
