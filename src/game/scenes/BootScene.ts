@@ -14,6 +14,7 @@ export class BootScene extends Phaser.Scene {
   create(): void {
     const fighterIds: FighterId[] = ['sword', 'fist', 'minigun', 'clock', 'plant', 'rock'];
     this.createBodyTexture();
+    this.createMinigunBulletTexture();
     fighterIds.forEach((id) => {
       this.createFighterTexture(id);
       this.createWeaponTexture(id);
@@ -36,6 +37,16 @@ export class BootScene extends Phaser.Scene {
     g.lineStyle(2, 0xffffff, 0.38);
     g.beginPath().arc(17, 18, 12, 3.55, 5.1).strokePath();
     g.generateTexture('fighter-body', 44, 44);
+    g.destroy();
+  }
+
+  private createMinigunBulletTexture(): void {
+    const g = this.make.graphics({ x: 0, y: 0 });
+    g.fillStyle(0x08111e).fillRoundedRect(1, 2, 30, 10, 4);
+    g.fillStyle(0xd9f7ff).fillRoundedRect(3, 3, 25, 5, 2);
+    g.fillStyle(0x42d8ff).fillRect(5, 4, 12, 3);
+    g.fillStyle(0xffffff).fillCircle(28, 7, 3);
+    g.generateTexture('minigun-bullet', 32, 14);
     g.destroy();
   }
 

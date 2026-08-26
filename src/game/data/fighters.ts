@@ -91,7 +91,7 @@ export const fighters: Record<FighterId, FighterConfig> = {
     },
     skill: {
       id: 'minigun-grapple', name: '갈고리', damage: 10, manaCost: 25,
-      startupMs: 150, activeMs: 230, recoveryMs: 330, hitstunMs: 2000,
+      startupMs: 500, activeMs: 230, recoveryMs: 330, hitstunMs: 1000,
       knockbackX: -360, knockbackY: -80, hitboxWidth: 480, hitboxHeight: 66,
       hitboxOffsetX: 250, hitboxOffsetY: -16, hitstopMs: 70, lungeVelocity: 560,
     },
@@ -103,8 +103,8 @@ export const fighters: Record<FighterId, FighterConfig> = {
     },
     descriptions: {
       basic: '피해 2 탄환 4발 · 매 3번째 점사는 6발',
-      skill: '갈고리 이동·끌어오기 · 피해 10 · 2초 기절 · 마나 25',
-      ultimate: '1초 간격 레이저 3줄기 · 줄기당 피해 25 · 마나 80',
+      skill: '0.5초 조준 후 갈고리 이동·끌어오기 · 피해 10 · 1초 기절 · 마나 25',
+      ultimate: '0.8초 간격 굵은 레이저 3줄기 · 0.2초당 피해 1 · 마나 80',
     },
   },
   clock: {
