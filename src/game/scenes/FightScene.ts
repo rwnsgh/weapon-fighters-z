@@ -346,33 +346,6 @@ export class FightScene extends Phaser.Scene {
     }
   }
 
-  private updateMinigunBullets(delta: number): void {
-    const speed = 760 * (2 / 3 + 0.3);
-    this.minigunBullets = this.minigunBullets.filter((bullet) => {
-      if (!bullet.sprite.active || bullet.target.state === 'KO') {
-        bullet.sprite.destroy();
-        return false;
-      }
-      bullet.sprite.x += bullet.direction * speed * (delta / 1000);
-      const hitbox = new Phaser.Geom.Rectangle(bullet.sprite.x - 11, bullet.sprite.y - 5, 22, 10);
-      if (Phaser.Geom.Intersects.RectangleToRectangle(hitbox, bullet.target.getHurtbox())) {
-        if (bullet.target.receiveBonusHit(2, bullet.direction * 45, -18, this.time.now, bullet.attacker, 90, 'basic', true)) {
-          this.damageNumber(bullet.target.x, bullet.target.y - 82, bullet.target.lastDamageTaken);
-          this.combat.showHitEffect(bullet.target.x, bullet.target.y - 24, bullet.attacker.fighterConfig.color);
-        }
-        bullet.sprite.destroy();
-        return false;
-      }
-      const outsideRange = bullet.direction === 1
-        ? bullet.sprite.x >= bullet.maxX
-        : bullet.sprite.x <= bullet.maxX;
-      if (outsideRange || bullet.sprite.x < 24 || bullet.sprite.x > 1256) {
-        bullet.sprite.destroy();
-        return false;
-      }
-      return true;
-    });
-}
   private spawnMinigunBullet(attacker: Fighter, shot: number): void {
     const bullet = this.add.image(attacker.x + attacker.facing * 66, attacker.y - 55 + ((shot % 3) - 1) * 5, 'minigun-bullet')
       .setOrigin(0.15, 0.5).setScale(attacker.facing * 0.8, 0.8).setDepth(20);
@@ -392,12 +365,12 @@ export class FightScene extends Phaser.Scene {
 
   private spawnLaserBarrage(attacker: Fighter): void {
     const target = attacker === this.p1 ? this.p2 : this.p1;
-    const laserWidth = 42 * 2.5;
+    const laserWidth = 42 * 3;
     const minX = laserWidth / 2 + 12;
     const maxX = 1280 - laserWidth / 2 - 12;
-    const warningMs = combatTuning.minigunUltimateLaserWarningMs;
-    const laserDuration = combatTuning.minigunUltimateLaserDurationMs;
-    const gapMs = combatTuning.minigunUltimateLaserGapMs;
+    const warningMs = 300;
+    const laserDuration = 1000;
+    const gapMs = 800;
 
     const fireLaser = (index: number): void => {
       if (target.state === 'KO' || !attacker.active || attacker.state === 'KO') return;
@@ -464,7 +437,7 @@ export class FightScene extends Phaser.Scene {
           });
         }
 
-        if (index + 1 < combatTuning.minigunUltimateLaserCount) {
+        if (index + 1 < 3) {
           const nextWarningDelay = Math.max(0, laserDuration + gapMs - warningMs);
           this.time.delayedCall(nextWarningDelay, () => fireLaser(index + 1));
         }
