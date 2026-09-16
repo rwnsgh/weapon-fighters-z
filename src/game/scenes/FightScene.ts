@@ -409,25 +409,38 @@ export class FightScene extends Phaser.Scene {
 
   private spawnLaserBarrage(attacker: Fighter): void {
     const target = attacker === this.p1 ? this.p2 : this.p1;
-    [0, 1000, 2000].forEach((delay, index) => {
+    const scale = 2.5;
+    const tickMs = 50;
+    const ticksPerLaser = 20;
+    const durationMs = tickMs * ticksPerLaser;
+    [0, 800, 1600].forEach((delay, index) => {
       this.time.delayedCall(delay, () => {
-        if (target.state === 'KO') return;
+        if (this.roundEnding || target.state === 'KO') return;
         const x = target.x;
-        const warning = this.add.rectangle(x, 350, 58, 560, 0xff5f74, 0.16)
+        const warning = this.add.rectangle(x, 350, 58 * scale, 560 * scale, 0xff5f74, 0.16)
           .setStrokeStyle(3, 0xffd3dd, 0.8).setDepth(17);
         this.tweens.add({ targets: warning, alpha: 0.5, duration: 180, yoyo: true, repeat: 1 });
         this.time.delayedCall(430, () => {
           warning.destroy();
-          if (target.state === 'KO') return;
-          const laser = this.add.rectangle(x, 345, 42, 570, 0xffffff, 0.92)
-            .setStrokeStyle(8, attacker.fighterConfig.color, 0.9).setDepth(22);
-          this.tweens.add({ targets: laser, alpha: 0, scaleX: 1.45, duration: 260, onComplete: () => laser.destroy() });
-          if (Math.abs(target.x - x) <= 48 && target.receiveBonusHit(
-            25, 0, -180, this.time.now, attacker, 380, 'ultimate',
-          )) {
-            this.damageNumber(target.x, target.y - 82, target.lastDamageTaken);
-            this.cameras.main.shake(120, 0.008 + index * 0.001);
+          if (this.roundEnding || target.state === 'KO') return;
+          const width = 42 * scale;
+          const height = 570 * scale;
+          const laser = this.add.rectangle(x, 345, width, height, 0xffffff, 0.92)
+            .setStrokeStyle(8 * scale, attacker.fighterConfig.color, 0.9).setDepth(22);
+          const area = new Phaser.Geom.Rectangle(x - width / 2, 345 - height / 2, width, height);
+          this.cameras.main.shake(120, 0.008 + index * 0.001);
+          // Twenty samples over one second; leaving the beam avoids later ticks.
+          for (let tick = 1; tick <= ticksPerLaser; tick += 1) {
+            this.time.delayedCall(tick * tickMs, () => {
+              if (!this.roundEnding && target.state !== 'KO'
+                && Phaser.Geom.Intersects.RectangleToRectangle(area, target.getHurtbox())
+                && target.receiveBonusHit(1, 0, 0, this.time.now, attacker, 0, 'ultimate', true)) {
+                this.damageNumber(target.x, target.y - 82, target.lastDamageTaken);
+              }
+              if (tick === ticksPerLaser) laser.destroy();
+            });
           }
+          this.tweens.add({ targets: laser, alpha: 0.45, duration: durationMs });
         });
       });
     });
