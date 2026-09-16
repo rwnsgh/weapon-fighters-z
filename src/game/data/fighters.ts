@@ -110,7 +110,7 @@ export const fighters: Record<FighterId, FighterConfig> = {
     descriptions: {
       basic: '피해 2 탄환 4발 · 매 3번째 점사는 6발',
       skill: '갈고리 이동·끌어오기 · 피해 10 · 2초 기절 · 마나 25',
-      ultimate: '1초 간격 레이저 3줄기 · 줄기당 피해 25 · 마나 80',
+      ultimate: '0.8초 간격 레이저 3줄기 · 1초간 0.05초마다 피해 1 (줄기당 최대 20) · 마나 80',
     },
   },
   clock: {
