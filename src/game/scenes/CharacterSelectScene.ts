@@ -227,7 +227,11 @@ export class CharacterSelectScene extends Phaser.Scene {
     moves.forEach((move, index) => {
       const y = 463 + index * 48;
       this.previewMoveRows[index]?.setText(`${move.label}  ${move.config.name}`);
-      this.previewMoveValues[index]?.setText(`피해 ${move.damage}   MP ${move.config.manaCost}`);
+      this.previewMoveValues[index]?.setText(
+        id === 'minigun' && move.label === 'SKILL'
+          ? '연사 → 미사일 → 에너지볼'
+          : `피해 ${move.damage}   MP ${move.config.manaCost}`,
+      );
       this.previewMoveBars.fillStyle(0x040815, 0.95).fillRoundedRect(712, y + 21, 300, 8, 3);
       this.previewMoveBars.fillStyle(0xff6672)
         .fillRoundedRect(712, y + 21, 300 * Phaser.Math.Clamp(move.damage / 60, 0, 1), 8, 3);

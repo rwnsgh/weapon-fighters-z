@@ -24,6 +24,7 @@ export type FighterState =
   | 'ATTACK' | 'SKILL' | 'ULTIMATE'
   | 'HITSTUN' | 'STUN' | 'KO' | 'RESPAWN_INVULNERABLE';
 export type AttackPhase = 'startup' | 'active' | 'recovery';
+export type MinigunMode = 'rapid' | 'missile' | 'energy-ball';
 export type FighterStatusEffect =
   | 'invulnerable'
   | 'haste'
@@ -64,6 +65,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   movementMultiplier = 1;
   damageMultiplier = 1;
   lastDamageTaken = 0;
+  minigunMode: MinigunMode = 'rapid';
   private stateUntil = 0;
   private attackCounter = 0;
   private basicCounter = 0;
@@ -83,6 +85,9 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   readonly displayTint: number;
   readonly weapon: Phaser.GameObjects.Image;
   readonly minigunGrip?: Phaser.GameObjects.Image;
+  readonly playerLabel: Phaser.GameObjects.Text;
+  readonly playerMarkerArrow: Phaser.GameObjects.Triangle;
+  readonly minigunModeIcon?: Phaser.GameObjects.Image;
 
   constructor(
     scene: Phaser.Scene,
@@ -126,6 +131,19 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     const body = this.body as Phaser.Physics.Arcade.Body;
     body.setSize(40, 40).setOffset(2, 4);
     body.setMaxVelocity(620, 900);
+
+    const playerColor = playerNumber === 1 ? '#2498ff' : '#ff4058';
+    const markerColor = playerNumber === 1 ? 0x2498ff : 0xff4058;
+    this.playerLabel = scene.add.text(x, y - 94, `${playerNumber}P`, {
+      fontFamily: 'Arial, sans-serif', fontSize: '27px', fontStyle: 'bold',
+      color: playerColor, stroke: '#05070d', strokeThickness: 4,
+    }).setOrigin(0.5).setDepth(25);
+    this.playerMarkerArrow = scene.add.triangle(x, y - 66, 0, 0, 20, 0, 10, 13, markerColor)
+      .setOrigin(0.5).setStrokeStyle(3, 0x05070d).setDepth(25);
+    if (config.id === 'minigun') {
+      this.minigunModeIcon = scene.add.image(x, y - 145, 'minigun-mode-rapid')
+        .setOrigin(0.5).setDisplaySize(64, 64).setDepth(25);
+    }
   }
 
   get bodyRef(): Phaser.Physics.Arcade.Body {
@@ -154,6 +172,8 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     this.movementMultiplier = 1;
     this.damageMultiplier = 1;
     this.basicCounter = 0;
+    this.minigunMode = 'rapid';
+    this.minigunModeIcon?.setTexture('minigun-mode-rapid').setDisplaySize(64, 64);
     this.burnUntil = 0;
     this.burnAttacker = undefined;
     this.frozenUntil = 0;
@@ -339,11 +359,23 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     if (!this.controlEnabled || this.state === 'KO' || this.state === 'RESPAWN_INVULNERABLE') {
       return false;
     }
+    if (this.fighterConfig.id === 'minigun' && kind === 'skill') {
+      this.cycleMinigunMode();
+      return false;
+    }
     if (!this.canStartAttack()) {
       this.bufferedAttack = { kind, expiresAt: now + combatTuning.attackBufferMs };
       return false;
     }
     return this.startAttack(kind, now);
+  }
+
+  private cycleMinigunMode(): void {
+    this.minigunMode = this.minigunMode === 'rapid'
+      ? 'missile'
+      : this.minigunMode === 'missile' ? 'energy-ball' : 'rapid';
+    this.minigunModeIcon?.setTexture(`minigun-mode-${this.minigunMode}`).setDisplaySize(64, 64);
+    this.emit('minigun-mode', this.minigunMode);
   }
 
   private canStartAttack(): boolean {
@@ -354,6 +386,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   }
 
   private startAttack(kind: AttackKind, now: number): boolean {
+    if (this.fighterConfig.id === 'minigun' && kind === 'skill') return false;
     const base = kind === 'basic'
       ? this.fighterConfig.basicAttack
       : kind === 'skill'
@@ -714,6 +747,9 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   }
 
   private updateWeaponPose(): void {
+    this.playerLabel.setPosition(this.x, this.y - 94).setVisible(this.visible);
+    this.playerMarkerArrow.setPosition(this.x, this.y - 66).setVisible(this.visible);
+    this.minigunModeIcon?.setPosition(this.x, this.y - 145).setVisible(this.visible);
     const id = this.fighterConfig.id;
     const idleAngles = { sword: -28, fist: 12, minigun: 0, clock: -18, plant: -20, rock: -34 };
     const idleReach = { sword: 10, fist: -3, minigun: 14, clock: 9, plant: 9, rock: 8 };

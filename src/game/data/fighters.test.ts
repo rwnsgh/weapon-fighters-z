@@ -19,7 +19,11 @@ describe('fighter roster', () => {
     expect(fighter.startMana).toBe(100);
     expect(fighter.manaRegen).toBe(5);
     expect(fighter.basicAttack.manaCost).toBe(0);
-    expect(fighter.skill.manaCost).toBeGreaterThan(0);
+    if (fighter.id === 'minigun') {
+      expect(fighter.skill.manaCost).toBe(0);
+    } else {
+      expect(fighter.skill.manaCost).toBeGreaterThan(0);
+    }
     expect(fighter.ultimate.manaCost).toBeGreaterThan(fighter.skill.manaCost);
   });
 
