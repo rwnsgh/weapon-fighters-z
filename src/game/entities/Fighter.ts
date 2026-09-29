@@ -83,6 +83,8 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   readonly displayTint: number;
   readonly weapon: Phaser.GameObjects.Image;
   readonly minigunGrip?: Phaser.GameObjects.Image;
+  readonly playerLabel: Phaser.GameObjects.Text;
+  readonly playerMarkerArrow: Phaser.GameObjects.Triangle;
 
   constructor(
     scene: Phaser.Scene,
@@ -112,6 +114,24 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       .setTint(tint)
       .setName(`fighter-weapon-${playerNumber}`)
       .setDepth(11);
+    this.playerLabel = scene.add.text(x, y - 94, `${playerNumber}P`, {
+      fontFamily: 'Arial Black, sans-serif',
+      fontSize: '27px',
+      color: playerNumber === 1 ? '#2498ff' : '#ff4058',
+      stroke: '#05070d',
+      strokeThickness: 4,
+    }).setOrigin(0.5).setDepth(15).setName(`fighter-player-label-${playerNumber}`);
+    this.playerMarkerArrow = scene.add.triangle(
+      x,
+      y - 66,
+      0,
+      0,
+      20,
+      0,
+      10,
+      13,
+      playerNumber === 1 ? 0x2498ff : 0xff4058,
+    ).setOrigin(0.5).setStrokeStyle(3, 0x05070d).setDepth(15).setName(`fighter-player-arrow-${playerNumber}`);
     if (config.id === 'minigun') {
       this.minigunGrip = scene.add.image(x, y - 28, 'weapon-minigun-grip')
         .setOrigin(1, 0.5)
@@ -336,6 +356,9 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   }
 
   tryAttack(kind: AttackKind, now: number): boolean {
+    // Minigun's grapple is retired. Reject before buffering, mana consumption,
+    // sounds, poses, and every attack-effect event can be triggered.
+    if (this.fighterConfig.id === 'minigun' && kind === 'skill') return false;
     if (!this.controlEnabled || this.state === 'KO' || this.state === 'RESPAWN_INVULNERABLE') {
       return false;
     }
@@ -489,7 +512,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     const attack = this.currentAttack;
     if (!attack || attack.phase !== 'active') return null;
     const { config, direction } = attack;
-    if (config.id === 'sword-screen-slash') return null;
+    if (config.id === 'sword-screen-slash' || config.id === 'minigun-burst') return null;
     if (config.damage <= 0) return null;
     const centerX = this.x + config.hitboxOffsetX * direction;
     const centerY = this.y - 24 + config.hitboxOffsetY;
@@ -963,6 +986,14 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
           ? 0xffffff
           : this.displayTint,
       );
+    this.playerLabel
+      .setPosition(this.x, this.y - 94)
+      .setAlpha(this.alpha)
+      .setVisible(this.visible);
+    this.playerMarkerArrow
+      .setPosition(this.x, this.y - 66)
+      .setAlpha(this.alpha)
+      .setVisible(this.visible);
 
     if (this.minigunGrip) {
       let gripAngle = 60;

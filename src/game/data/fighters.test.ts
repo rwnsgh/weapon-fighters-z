@@ -42,8 +42,8 @@ describe('fighter roster', () => {
   it('keeps the revised proposal values for the four completed fighters', () => {
     expect(fighters.minigun.basicAttack.damage).toBe(2);
     expect(fighters.minigun.basicAttack).toMatchObject({
-      hitboxWidth: 648,
-      hitboxOffsetX: 334,
+      hitboxWidth: 518.4,
+      hitboxOffsetX: 408.48,
       hitstunMs: 0,
       knockbackX: 0,
       knockbackY: 0,

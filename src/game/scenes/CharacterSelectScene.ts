@@ -226,13 +226,18 @@ export class CharacterSelectScene extends Phaser.Scene {
     this.previewMoveBars.clear();
     moves.forEach((move, index) => {
       const y = 463 + index * 48;
-      this.previewMoveRows[index]?.setText(`${move.label}  ${move.config.name}`);
-      this.previewMoveValues[index]?.setText(`피해 ${move.damage}   MP ${move.config.manaCost}`);
+      const disabled = id === 'minigun' && move.label === 'SKILL';
+      this.previewMoveRows[index]?.setText(disabled ? 'SKILL  비활성화' : `${move.label}  ${move.config.name}`);
+      this.previewMoveRows[index]?.setColor(disabled ? '#596783' : '#e8edff');
+      this.previewMoveValues[index]?.setText(disabled ? '사용 불가' : `피해 ${move.damage}   MP ${move.config.manaCost}`);
+      this.previewMoveValues[index]?.setColor(disabled ? '#596783' : '#ffffff');
       this.previewMoveBars.fillStyle(0x040815, 0.95).fillRoundedRect(712, y + 21, 300, 8, 3);
-      this.previewMoveBars.fillStyle(0xff6672)
-        .fillRoundedRect(712, y + 21, 300 * Phaser.Math.Clamp(move.damage / 60, 0, 1), 8, 3);
+      if (!disabled) {
+        this.previewMoveBars.fillStyle(0xff6672)
+          .fillRoundedRect(712, y + 21, 300 * Phaser.Math.Clamp(move.damage / 60, 0, 1), 8, 3);
+      }
       this.previewMoveBars.fillStyle(0x040815, 0.95).fillRoundedRect(1030, y + 21, 158, 8, 3);
-      if (move.config.manaCost > 0) {
+      if (!disabled && move.config.manaCost > 0) {
         this.previewMoveBars.fillStyle(0xa477ff)
           .fillRoundedRect(1030, y + 21, 158 * move.config.manaCost / 100, 8, 3);
       }

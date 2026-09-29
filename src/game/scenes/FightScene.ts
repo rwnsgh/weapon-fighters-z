@@ -276,7 +276,9 @@ export class FightScene extends Phaser.Scene {
       && now < fighter.timeStopUntil
       && input.basic.isDown;
     if (Phaser.Input.Keyboard.JustDown(input.basic) || rapidClockShot) fighter.tryAttack('basic', now);
-    if (Phaser.Input.Keyboard.JustDown(input.skill)) fighter.tryAttack('skill', now);
+    if (fighter.fighterConfig.id !== 'minigun' && Phaser.Input.Keyboard.JustDown(input.skill)) {
+      fighter.tryAttack('skill', now);
+    }
     if (Phaser.Input.Keyboard.JustDown(input.ultimate)) fighter.tryAttack('ultimate', now);
   }
 
@@ -360,8 +362,6 @@ export class FightScene extends Phaser.Scene {
           }
         });
       });
-    } else if (attacker.fighterConfig.id === 'minigun' && attack.kind === 'basic') {
-      this.continueBurst(attacker, target, attack);
     } else if (attacker.fighterConfig.id === 'plant' && attack.kind === 'basic') {
       this.continueWaterStream(attacker, target);
     } else if (attacker.fighterConfig.id === 'rock' && attack.kind === 'basic') {
@@ -371,28 +371,6 @@ export class FightScene extends Phaser.Scene {
         }
       });
       if (attack.config.id === 'rock-lava-punch') target.applyBurn(attacker, this.time.now, 2000);
-    }
-  }
-
-  private continueBurst(attacker: Fighter, target: Fighter, attack: ActiveAttack): void {
-    const shotCount = minigunBurstCount(attack.sequence);
-    for (let shot = 1; shot < shotCount; shot += 1) {
-      this.time.delayedCall(shot * 72, () => {
-        if (target.state === 'KO') return;
-        if (target.receiveBonusHit(
-          2,
-          0,
-          0,
-          this.time.now,
-          attacker,
-          0,
-          'basic',
-          true,
-        )) {
-          this.damageNumber(target.x, target.y - 82, target.lastDamageTaken);
-          this.combat.showHitEffect(target.x, target.y - 24, attacker.fighterConfig.color);
-        }
-      });
     }
   }
 
@@ -409,28 +387,72 @@ export class FightScene extends Phaser.Scene {
 
   private spawnLaserBarrage(attacker: Fighter): void {
     const target = attacker === this.p1 ? this.p2 : this.p1;
-    [0, 1000, 2000].forEach((delay, index) => {
+    const tickIntervalMs = 50;
+    const tickCount = 11;
+    const durationMs = tickIntervalMs * tickCount;
+    const beamHeight = 2400;
+    const mirroredMiniguns = attacker.playerNumber === 2 && this.p1.fighterConfig.id === 'minigun';
+    const laserColor = mirroredMiniguns ? 0xff4f64 : attacker.fighterConfig.color;
+    [0, 1100, 2200].forEach((delay, index) => {
       this.time.delayedCall(delay, () => {
-        if (target.state === 'KO') return;
-        const x = target.x;
-        const warning = this.add.rectangle(x, 350, 58, 560, 0xff5f74, 0.16)
-          .setStrokeStyle(3, 0xffd3dd, 0.8).setDepth(17);
+        if (this.roundEnding || target.state === 'KO') return;
+        const warningWidth = 58 * 2.5;
+        const x = Phaser.Math.Between(
+          Math.ceil(warningWidth / 2),
+          Math.floor(this.scale.width - warningWidth / 2),
+        );
+        const y = 350;
+        const aimX = target.x;
+        const aimY = target.y - 36;
+        // Phaser rectangles point along their local Y axis, so offset by 90°
+        // after finding the angle from the random screen position to the target.
+        const rotation = Phaser.Math.Angle.Between(x, y, aimX, aimY) - Math.PI / 2;
+        const warning = this.add.rectangle(x, y, warningWidth, beamHeight, laserColor, 0.16)
+          .setRotation(rotation)
+          .setStrokeStyle(3, mirroredMiniguns ? 0xffd3dd : 0xc6f5ff, 0.8).setDepth(17);
         this.tweens.add({ targets: warning, alpha: 0.5, duration: 180, yoyo: true, repeat: 1 });
         this.time.delayedCall(430, () => {
           warning.destroy();
-          if (target.state === 'KO') return;
-          const laser = this.add.rectangle(x, 345, 42, 570, 0xffffff, 0.92)
-            .setStrokeStyle(8, attacker.fighterConfig.color, 0.9).setDepth(22);
-          this.tweens.add({ targets: laser, alpha: 0, scaleX: 1.45, duration: 260, onComplete: () => laser.destroy() });
-          if (Math.abs(target.x - x) <= 48 && target.receiveBonusHit(
-            25, 0, -180, this.time.now, attacker, 380, 'ultimate',
-          )) {
-            this.damageNumber(target.x, target.y - 82, target.lastDamageTaken);
-            this.cameras.main.shake(120, 0.008 + index * 0.001);
-          }
+          if (this.roundEnding || target.state === 'KO') return;
+          const width = 42 * 2.5;
+          const height = beamHeight;
+          const laser = this.add.rectangle(x, y, width, height, 0xffffff, 0.92)
+            .setRotation(rotation)
+            .setStrokeStyle(8 * 2.5, laserColor, 0.9).setDepth(22);
+          this.tweens.add({ targets: laser, alpha: 0.4, duration: durationMs });
+          this.cameras.main.shake(120, 0.008 + index * 0.001);
+          let ticks = 0;
+          this.time.addEvent({
+            delay: tickIntervalMs,
+            repeat: tickCount - 1,
+            callback: () => {
+              ticks += 1;
+              if (!this.roundEnding && target.state !== 'KO'
+                && this.isInsideLaser(target, x, y, width, height, rotation)
+                && target.receiveBonusHit(2, 0, 0, this.time.now, attacker, 50, 'ultimate')) {
+                this.damageNumber(target.x, target.y - 82, target.lastDamageTaken);
+              }
+              if (ticks === tickCount) laser.destroy();
+            },
+          });
         });
       });
     });
+  }
+
+  private isInsideLaser(
+    target: Fighter,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    rotation: number,
+  ): boolean {
+    const dx = target.x - x;
+    const dy = target.y - 36 - y;
+    const across = Math.abs(dx * Math.cos(rotation) + dy * Math.sin(rotation));
+    const along = Math.abs(dx * -Math.sin(rotation) + dy * Math.cos(rotation));
+    return across <= width / 2 && along <= height / 2;
   }
 
   private startTimeStop(attacker: Fighter): void {
@@ -748,12 +770,31 @@ export class FightScene extends Phaser.Scene {
         });
         return;
       }
+      const attack = fighter.currentAttack;
+      if (!attack) return;
+      const target = fighter === this.p1 ? this.p2 : this.p1;
       const sequence = fighter.currentAttack?.sequence ?? 1;
       const count = minigunBurstCount(sequence);
+      const bulletStartOffset = 60;
+      const maxRange = fighter.fighterConfig.basicAttack.hitboxOffsetX
+        + fighter.fighterConfig.basicAttack.hitboxWidth / 2;
+      const bulletTravel = maxRange - bulletStartOffset;
+      const bulletSpeed = (756 / 249) * 0.75;
       for (let index = 0; index < count; index += 1) {
         this.time.delayedCall(index * 66, () => {
+          if (target.state === 'KO') return;
+          const bulletStartX = Phaser.Math.Clamp(
+            fighter.x + fighter.facing * bulletStartOffset,
+            0,
+            this.scale.width,
+          );
+          const bulletEndX = Phaser.Math.Clamp(
+            bulletStartX + fighter.facing * bulletTravel,
+            0,
+            this.scale.width,
+          );
           const bulletBorder = this.add.rectangle(
-            fighter.x + fighter.facing * 60,
+            bulletStartX,
             fighter.y - 33 + (index % 2) * 4,
             20,
             7,
@@ -768,11 +809,29 @@ export class FightScene extends Phaser.Scene {
             index % 2 ? 0xffffff : color,
             0.95,
           ).setDepth(17);
+          let hit = false;
           this.tweens.add({
             targets: [bulletBorder, bulletCore],
-            x: bulletBorder.x + fighter.facing * 756,
-            alpha: 0,
-            duration: 249,
+            x: bulletEndX,
+            duration: Math.max(1, Math.round(Math.abs(bulletEndX - bulletStartX) / bulletSpeed)),
+            onUpdate: () => {
+              if (hit || target.state === 'KO') return;
+              const bulletHitbox = new Phaser.Geom.Rectangle(
+                bulletBorder.x - 10,
+                bulletBorder.y - 4,
+                20,
+                8,
+              );
+              if (!Phaser.Geom.Intersects.RectangleToRectangle(bulletHitbox, target.getBodyHurtbox())) return;
+              hit = true;
+              bulletBorder.destroy();
+              bulletCore.destroy();
+              if (target.receiveBonusHit(2, 0, 0, this.time.now, fighter, 0, 'basic', true)) {
+                this.sounds.play('hit');
+                this.damageNumber(target.x, target.y - 82, target.lastDamageTaken);
+                this.combat.showHitEffect(target.x, target.y - 24, fighter.fighterConfig.color);
+              }
+            },
             onComplete: () => { bulletBorder.destroy(); bulletCore.destroy(); },
           });
         });
@@ -974,6 +1033,11 @@ export class FightScene extends Phaser.Scene {
 
   private ultimateIntro(fighter: Fighter): void {
     const swordUltimate = fighter.fighterConfig.id === 'sword';
+    const titleColor = fighter.fighterConfig.id === 'minigun'
+      && fighter.playerNumber === 2
+      && this.p1.fighterConfig.id === 'minigun'
+      ? 0xff4f64
+      : fighter.fighterConfig.color;
     const shade = this.add.rectangle(640, 360, 1280, 720, 0x02030a, 0.72).setDepth(40);
     const line = this.add.text(
       640,
@@ -981,7 +1045,7 @@ export class FightScene extends Phaser.Scene {
       swordUltimate ? '가루로 만들어 주지' : fighter.fighterConfig.ultimate.name,
       {
       fontFamily: fontDisplay, fontStyle: 'bold', fontSize: '50px', color: '#ffffff',
-      stroke: Phaser.Display.Color.IntegerToColor(fighter.fighterConfig.color).rgba,
+      stroke: Phaser.Display.Color.IntegerToColor(titleColor).rgba,
       strokeThickness: 7,
       },
     ).setOrigin(0.5).setDepth(44);
