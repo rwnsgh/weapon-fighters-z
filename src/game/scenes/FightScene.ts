@@ -1,14 +1,22 @@
 import Phaser from 'phaser';
+import { combatTuning } from '../config/combatTuning';
 import { fighters } from '../data/fighters';
+import { voidPlatforms } from '../data/maps';
 import type { AttackKind, MatchSettings, RoundResult } from '../data/types';
 import { Fighter, type ActiveAttack } from '../entities/Fighter';
 import { CombatSystem } from '../systems/CombatSystem';
-import { determineRoundResult } from '../systems/CombatLogic';
+import {
+  determineRoundResult,
+  evenlySpacedCutAngle,
+  minigunBurstCount,
+  screenCutPath,
+  swordWavePositions,
+} from '../systems/CombatLogic';
 import { InputController } from '../systems/InputController';
 import { RoundManager } from '../systems/RoundManager';
 import { SoundSystem } from '../systems/SoundSystem';
 import { FightHUD } from '../ui/FightHUD';
-import { addButton, palette } from '../ui/ui';
+import { addButton, fontBody, fontDisplay, fontTech, palette } from '../ui/ui';
 
 interface PlantNode {
   owner: Fighter;
@@ -20,16 +28,16 @@ interface PlantNode {
   view: Phaser.GameObjects.Container;
 }
 
-interface GrappleVisual {
-  attacker: Fighter;
-  hook: Phaser.GameObjects.Image;
-  cables: Phaser.GameObjects.Image[];
-  startX: number;
-  startY: number;
-  targetX: number;
-  targetY: number;
-  startedAt: number;
-  duration: number;
+interface SwordSurface {
+  left: number;
+  right: number;
+  top: number;
+}
+
+interface SwordUltimateFreeze {
+  until: number;
+  p1: { x: number; y: number };
+  p2: { x: number; y: number };
 }
 
 export class FightScene extends Phaser.Scene {
@@ -53,11 +61,23 @@ export class FightScene extends Phaser.Scene {
   private debugHandler?: () => void;
   private escapeHandler?: () => void;
   private plantNodes: PlantNode[] = [];
-  private grappleVisuals: GrappleVisual[] = [];
+  private swordTrailAt = new Map<number, number>();
+  private swordUltimateFreeze?: SwordUltimateFreeze;
 
   constructor() { super('FightScene'); }
 
   create(): void {
+    // Scene instances survive restart/start cycles in Phaser. These flags must
+    // describe the new round, not the round that just finished.
+    this.roundEnding = false;
+    this.isPaused = false;
+    this.debugVisible = false;
+    this.swordTrailAt.clear();
+    this.swordUltimateFreeze = undefined;
+    this.pauseObjects = [];
+    this.controlsBeforePause = [false, false];
+    this.countdown = undefined;
+
     this.settings = this.registry.get('settings') as MatchSettings;
     this.drawArena();
     this.inputs = new InputController(this);
@@ -116,7 +136,7 @@ export class FightScene extends Phaser.Scene {
     this.hud = new FightHUD(this, this.p1, this.p2);
     this.debugGraphics = this.add.graphics().setDepth(80);
     this.debugText = this.add.text(18, 145, '', {
-      fontFamily: 'monospace', fontSize: '14px', color: '#e9f5ff',
+      fontFamily: fontTech, fontSize: '13px', color: '#e9f5ff',
       backgroundColor: '#050711cc', padding: { x: 8, y: 6 },
     }).setDepth(81).setVisible(false);
     this.wireFighterEvents(this.p1);
@@ -132,13 +152,13 @@ export class FightScene extends Phaser.Scene {
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       if (this.debugHandler) this.input.keyboard?.off('keydown-F2', this.debugHandler);
       if (this.escapeHandler) this.input.keyboard?.off('keydown-ESC', this.escapeHandler);
+      this.input.keyboard?.resetKeys();
     });
     this.startCountdown();
   }
 
   update(time: number, delta: number): void {
     if (this.isPaused) return;
-    this.updateGrappleVisuals(time);
     this.updatePlantAuras(time);
     const p1Move = {
       left: this.inputs.p1.left.isDown,
@@ -154,9 +174,22 @@ export class FightScene extends Phaser.Scene {
     };
     this.p1.updateFighter(time, delta, this.p2.x, p1Move);
     this.p2.updateFighter(time, delta, this.p1.x, p2Move);
+    const swordUltimateFrozen = Boolean(
+      this.swordUltimateFreeze && time < this.swordUltimateFreeze.until,
+    );
+    if (swordUltimateFrozen && this.swordUltimateFreeze) {
+      this.holdFighterAt(this.p1, this.swordUltimateFreeze.p1);
+      this.holdFighterAt(this.p2, this.swordUltimateFreeze.p2);
+    } else if (this.swordUltimateFreeze) {
+      this.swordUltimateFreeze = undefined;
+    }
+    this.updateSwordSlamTrail(this.p1, time);
+    this.updateSwordSlamTrail(this.p2, time);
 
-    this.handleAttackInput(this.p1, this.inputs.p1, time);
-    this.handleAttackInput(this.p2, this.inputs.p2, time);
+    if (!swordUltimateFrozen) {
+      this.handleAttackInput(this.p1, this.inputs.p1, time);
+      this.handleAttackInput(this.p2, this.inputs.p2, time);
+    }
     this.combat.update(time, [this.p1, this.p2]);
 
     if (this.settings.map === 'void') {
@@ -188,11 +221,11 @@ export class FightScene extends Phaser.Scene {
       .setStrokeStyle(4, palette.cyan, 0.95).setDepth(201);
     const topBand = this.add.rectangle(640, 115, 646, 46, palette.blue, 0.95).setDepth(202);
     const title = this.add.text(640, 176, 'PAUSED', {
-      fontFamily: 'Arial Black, sans-serif', fontSize: '54px', color: '#ffffff',
+      fontFamily: fontTech, fontStyle: 'bold', fontSize: '52px', color: '#ffffff',
       stroke: '#091027', strokeThickness: 8,
     }).setOrigin(0.5).setDepth(202);
     const subtitle = this.add.text(640, 224, 'ESC를 다시 누르면 전투로 돌아갑니다', {
-      fontSize: '17px', color: '#aebee8',
+      fontFamily: fontBody, fontSize: '16px', color: '#aebee8',
     }).setOrigin(0.5).setDepth(202);
     const resume = addButton(this, 640, 300, '계속하기', () => this.resumeFight(), 390).setDepth(203);
     const restart = addButton(this, 640, 380, '현재 라운드 다시 시작', () => {
@@ -251,12 +284,21 @@ export class FightScene extends Phaser.Scene {
     fighter.on('jump', () => this.sounds.play('jump'));
     fighter.on('attack-start', (kind: AttackKind) => {
       this.sounds.play(kind === 'basic' ? 'attack' : kind === 'skill' ? 'skill' : 'ultimate');
-      if (kind === 'ultimate') this.ultimateIntro(fighter);
+      if (kind === 'ultimate') {
+        this.ultimateIntro(fighter);
+        if (fighter.fighterConfig.id === 'sword' && fighter.currentAttack) {
+          this.startSwordUltimateCut(fighter, fighter.currentAttack);
+        } else if (fighter.fighterConfig.id === 'fist' && fighter.currentAttack) {
+          this.startFistRushDots(fighter, fighter.currentAttack);
+          this.startFistRushFinisher(fighter, fighter.currentAttack);
+        }
+      }
     });
     fighter.on('attack-active', (kind: AttackKind) => {
-      this.attackVisual(fighter, kind);
-      if (fighter.fighterConfig.id === 'sword' && kind === 'skill') this.spawnSwordShards(fighter);
-      if (fighter.fighterConfig.id === 'minigun' && kind === 'skill') this.spawnGrapplingHook(fighter);
+      if (!((fighter.fighterConfig.id === 'sword' || fighter.fighterConfig.id === 'fist')
+        && kind === 'ultimate')) {
+        this.attackVisual(fighter, kind);
+      }
       if (fighter.fighterConfig.id === 'minigun' && kind === 'ultimate') this.spawnLaserBarrage(fighter);
       if (fighter.fighterConfig.id === 'clock' && kind === 'ultimate') this.startTimeStop(fighter);
       if (fighter.fighterConfig.id === 'plant' && kind === 'basic') this.waterSeeds(fighter);
@@ -264,9 +306,23 @@ export class FightScene extends Phaser.Scene {
       if (fighter.fighterConfig.id === 'plant' && kind === 'ultimate') this.launchTrees(fighter);
       if (fighter.fighterConfig.id === 'rock' && kind === 'skill') this.spawnRockSpikes(fighter);
     });
+    fighter.on('sword-slam-dive', () => {
+      this.cameras.main.shake(90, 0.004);
+    });
+    fighter.on('sword-slam-land', (attack: ActiveAttack) => {
+      this.sounds.play('hit');
+      this.swordSlamImpact(fighter);
+      const target = fighter === this.p1 ? this.p2 : this.p1;
+      const impactArea = new Phaser.Geom.Rectangle(fighter.x - 92, fighter.y - 78, 184, 104);
+      if (Phaser.Geom.Intersects.RectangleToRectangle(impactArea, target.getHurtbox())
+        && target.receiveAttackSnapshot(fighter, attack, this.time.now)) {
+        this.onHit(fighter, target, attack);
+      }
+      this.spawnSwordShards(fighter);
+    });
     fighter.on('mana-empty', () => {
       const label = this.add.text(fighter.x, fighter.y - 132, '마나 부족!', {
-        fontSize: '17px', fontStyle: 'bold', color: '#b878ff',
+        fontFamily: fontBody, fontSize: '16px', fontStyle: 'bold', color: '#b878ff',
       }).setOrigin(0.5).setDepth(60);
       this.tweens.add({ targets: label, y: label.y - 28, alpha: 0, duration: 520, onComplete: () => label.destroy() });
     });
@@ -300,15 +356,10 @@ export class FightScene extends Phaser.Scene {
           );
           if (hit) {
             this.damageNumber(target.x, target.y - 82, target.lastDamageTaken);
-            this.slashLine(target.x, target.y - 50, attacker.fighterConfig.color, index);
             if (final) this.cameras.main.shake(150, 0.012);
           }
         });
       });
-    } else if (attacker.fighterConfig.id === 'fist' && attack.kind === 'ultimate') {
-      this.rushVisual(target, attacker.fighterConfig.color);
-    } else if (attacker.fighterConfig.id === 'minigun' && attack.kind === 'basic') {
-      this.continueBurst(attacker, target, attack);
     } else if (attacker.fighterConfig.id === 'plant' && attack.kind === 'basic') {
       this.continueWaterStream(attacker, target);
     } else if (attacker.fighterConfig.id === 'rock' && attack.kind === 'basic') {
@@ -321,54 +372,6 @@ export class FightScene extends Phaser.Scene {
     }
   }
 
-  private continueBurst(attacker: Fighter, target: Fighter, attack: ActiveAttack): void {
-    const shotCount = attack.sequence % 3 === 0 ? 6 : 4;
-    for (let shot = 1; shot < shotCount; shot += 1) {
-      this.time.delayedCall(shot * 72, () => {
-        if (target.state === 'KO') return;
-        if (target.receiveBonusHit(
-          2,
-          shot === shotCount - 1 ? attack.direction * 85 : 0,
-          -18,
-          this.time.now,
-          attacker,
-          90,
-          'basic',
-        )) {
-          this.damageNumber(target.x, target.y - 82, target.lastDamageTaken);
-          this.combat.showHitEffect(target.x, target.y - 24, attacker.fighterConfig.color);
-        }
-      });
-    }
-  }
-
-  private updateMinigunBullets(delta: number): void {
-    const speed = 760 * (2 / 3 + 0.3);
-    this.minigunBullets = this.minigunBullets.filter((bullet) => {
-      if (!bullet.sprite.active || bullet.target.state === 'KO') {
-        bullet.sprite.destroy();
-        return false;
-      }
-      bullet.sprite.x += bullet.direction * speed * (delta / 1000);
-      const hitbox = new Phaser.Geom.Rectangle(bullet.sprite.x - 11, bullet.sprite.y - 5, 22, 10);
-      if (Phaser.Geom.Intersects.RectangleToRectangle(hitbox, bullet.target.getHurtbox())) {
-        if (bullet.target.receiveBonusHit(2, bullet.direction * 45, -18, this.time.now, bullet.attacker, 90, 'basic', true)) {
-          this.damageNumber(bullet.target.x, bullet.target.y - 82, bullet.target.lastDamageTaken);
-          this.combat.showHitEffect(bullet.target.x, bullet.target.y - 24, bullet.attacker.fighterConfig.color);
-        }
-        bullet.sprite.destroy();
-        return false;
-      }
-      const outsideRange = bullet.direction === 1
-        ? bullet.sprite.x >= bullet.maxX
-        : bullet.sprite.x <= bullet.maxX;
-      if (outsideRange || bullet.sprite.x < 24 || bullet.sprite.x > 1256) {
-        bullet.sprite.destroy();
-        return false;
-      }
-      return true;
-    });
-}
   private continueWaterStream(attacker: Fighter, target: Fighter): void {
     for (let particle = 1; particle < 10; particle += 1) {
       this.time.delayedCall(particle * 58, () => {
@@ -382,86 +385,72 @@ export class FightScene extends Phaser.Scene {
 
   private spawnLaserBarrage(attacker: Fighter): void {
     const target = attacker === this.p1 ? this.p2 : this.p1;
-    const laserWidth = 42 * 2.5;
-    const minX = laserWidth / 2 + 12;
-    const maxX = 1280 - laserWidth / 2 - 12;
-    const warningMs = combatTuning.minigunUltimateLaserWarningMs;
-    const laserDuration = combatTuning.minigunUltimateLaserDurationMs;
-    const gapMs = combatTuning.minigunUltimateLaserGapMs;
-
-    const fireLaser = (index: number): void => {
-      if (target.state === 'KO' || !attacker.active || attacker.state === 'KO') return;
-
-      // Each laser starts at a random visible point and rotates toward the
-      // enemy once at firing time. The fired laser then stays locked there.
-      const originX = Phaser.Math.Between(minX, maxX);
-      const originY = 80;
-      const aimedX = Phaser.Math.Clamp(target.x, minX, maxX);
-      const aimedY = Phaser.Math.Clamp(target.y - 30, 40, 680);
-      const warning = this.add.rectangle(originX, 350, laserWidth, 560, 0xff5f74, 0.16)
-        .setStrokeStyle(3, 0xffd3dd, 0.8).setDepth(17);
-      this.tweens.add({
-        targets: warning,
-        alpha: 0.5,
-        duration: warningMs / 6,
-        yoyo: true,
-        repeat: 2,
-      });
-
-      this.time.delayedCall(warningMs, () => {
-        if (warning.active) warning.destroy();
-        if (target.state === 'KO' || !attacker.active || attacker.state === 'KO') return;
-
-        const laserLength = 1140;
-        const beamAngle = Phaser.Math.Angle.Between(originX, originY, aimedX, aimedY);
-        const laserCenterX = (originX + aimedX) / 2;
-        const laserCenterY = (originY + aimedY) / 2;
-        const laser = this.add.rectangle(laserCenterX, laserCenterY, laserWidth, laserLength, 0xffffff, 0.92)
-          .setRotation(beamAngle - Math.PI / 2)
-          .setStrokeStyle(8, attacker.fighterConfig.color, 0.9).setDepth(22);
-        this.tweens.add({
-          targets: laser,
-          alpha: 0,
-          scaleX: 1.08,
-          duration: laserDuration,
-          onComplete: () => laser.destroy(),
-        });
-        for (let tick = 1; tick <= laserDuration / 100; tick += 1) {
-          this.time.delayedCall(tick * 100, () => {
-            if (target.state === 'KO') return;
-            const beamHalfLength = laserLength / 2;
-            const beamStartX = laserCenterX - Math.cos(beamAngle) * beamHalfLength;
-            const beamStartY = laserCenterY - Math.sin(beamAngle) * beamHalfLength;
-            const beamEndX = laserCenterX + Math.cos(beamAngle) * beamHalfLength;
-            const beamEndY = laserCenterY + Math.sin(beamAngle) * beamHalfLength;
-            const beamDX = beamEndX - beamStartX;
-            const beamDY = beamEndY - beamStartY;
-            const beamLengthSquared = beamDX * beamDX + beamDY * beamDY;
-            const targetX = target.x;
-            const targetY = target.y - 30;
-            const projection = Phaser.Math.Clamp(
-              ((targetX - beamStartX) * beamDX + (targetY - beamStartY) * beamDY) / beamLengthSquared,
-              0,
-              1,
-            );
-            const closestX = beamStartX + beamDX * projection;
-            const closestY = beamStartY + beamDY * projection;
-            if (Phaser.Math.Distance.Between(targetX, targetY, closestX, closestY) > laserWidth / 2) return;
-            if (target.receiveBonusHit(1, 0, 0, this.time.now, attacker, 100, 'ultimate')) {
-              this.damageNumber(target.x, target.y - 82, target.lastDamageTaken);
-              if (tick === 1) this.cameras.main.shake(120, 0.008 + index * 0.001);
-            }
+    const tickIntervalMs = 50;
+    const tickCount = 11;
+    const durationMs = tickIntervalMs * tickCount;
+    const beamHeight = 2400;
+    const mirroredMiniguns = attacker.playerNumber === 2 && this.p1.fighterConfig.id === 'minigun';
+    const laserColor = mirroredMiniguns ? 0xff4f64 : attacker.fighterConfig.color;
+    [0, 1100, 2200].forEach((delay, index) => {
+      this.time.delayedCall(delay, () => {
+        if (this.roundEnding || target.state === 'KO') return;
+        const warningWidth = 58 * 2.5;
+        const x = Phaser.Math.Between(
+          Math.ceil(warningWidth / 2),
+          Math.floor(this.scale.width - warningWidth / 2),
+        );
+        const y = 350;
+        const aimX = target.x;
+        const aimY = target.y - 36;
+        // Phaser rectangles point along their local Y axis, so offset by 90°
+        // after finding the angle from the random screen position to the target.
+        const rotation = Phaser.Math.Angle.Between(x, y, aimX, aimY) - Math.PI / 2;
+        const warning = this.add.rectangle(x, y, warningWidth, beamHeight, laserColor, 0.16)
+          .setRotation(rotation)
+          .setStrokeStyle(3, mirroredMiniguns ? 0xffd3dd : 0xc6f5ff, 0.8).setDepth(17);
+        this.tweens.add({ targets: warning, alpha: 0.5, duration: 180, yoyo: true, repeat: 1 });
+        this.time.delayedCall(430, () => {
+          warning.destroy();
+          if (this.roundEnding || target.state === 'KO') return;
+          const width = 42 * 2.5;
+          const height = beamHeight;
+          const laser = this.add.rectangle(x, y, width, height, 0xffffff, 0.92)
+            .setRotation(rotation)
+            .setStrokeStyle(8 * 2.5, laserColor, 0.9).setDepth(22);
+          this.tweens.add({ targets: laser, alpha: 0.4, duration: durationMs });
+          this.cameras.main.shake(120, 0.008 + index * 0.001);
+          let ticks = 0;
+          this.time.addEvent({
+            delay: tickIntervalMs,
+            repeat: tickCount - 1,
+            callback: () => {
+              ticks += 1;
+              if (!this.roundEnding && target.state !== 'KO'
+                && this.isInsideLaser(target, x, y, width, height, rotation)
+                && target.receiveBonusHit(2, 0, 0, this.time.now, attacker, 50, 'ultimate')) {
+                this.damageNumber(target.x, target.y - 82, target.lastDamageTaken);
+              }
+              if (ticks === tickCount) laser.destroy();
+            },
           });
-        }
-
-        if (index + 1 < combatTuning.minigunUltimateLaserCount) {
-          const nextWarningDelay = Math.max(0, laserDuration + gapMs - warningMs);
-          this.time.delayedCall(nextWarningDelay, () => fireLaser(index + 1));
-        }
+        });
       });
-    };
+    });
+  }
 
-    fireLaser(0);
+  private isInsideLaser(
+    target: Fighter,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    rotation: number,
+  ): boolean {
+    const dx = target.x - x;
+    const dy = target.y - 36 - y;
+    const across = Math.abs(dx * Math.cos(rotation) + dy * Math.sin(rotation));
+    const along = Math.abs(dx * -Math.sin(rotation) + dy * Math.cos(rotation));
+    return across <= width / 2 && along <= height / 2;
   }
 
   private startTimeStop(attacker: Fighter): void {
@@ -592,94 +581,154 @@ export class FightScene extends Phaser.Scene {
     }
   }
 
-  private spawnGrapplingHook(attacker: Fighter): void {
-    const target = attacker === this.p1 ? this.p2 : this.p1;
-    const startX = attacker.x + attacker.facing * 66;
-    const startY = attacker.y - 52;
-    const targetX = target.x;
-    const targetY = target.y - 46;
-    const distance = Phaser.Math.Distance.Between(startX, startY, targetX, targetY);
-    const duration = Math.max(180, (distance / (attacker.fighterConfig.moveSpeed * 3)) * 1000);
-    const hook = this.add.image(startX, startY, 'grapple-hook')
-      .setOrigin(0.08, 0.5)
-      .setScale(0.16)
-      .setRotation(Phaser.Math.Angle.Between(startX, startY, targetX, targetY))
-      .setDepth(19);
-    const cableCount = Math.max(1, Math.ceil(distance / 30));
-    const cables = Array.from({ length: cableCount }, () => this.add.image(startX, startY, 'grapple-cable')
-      .setOrigin(0.5)
-      .setScale(0.14, 0.14)
-      .setRotation(hook.rotation)
-      .setDepth(18)
-      .setVisible(false));
-    this.grappleVisuals.push({
-      attacker, hook, cables, startX, startY, targetX, targetY,
-      startedAt: this.time.now, duration,
-    });
-  }
-
-  private updateGrappleVisuals(now: number): void {
-    this.grappleVisuals = this.grappleVisuals.filter((visual) => {
-      const progress = Phaser.Math.Clamp((now - visual.startedAt) / visual.duration, 0, 1);
-      const dx = visual.targetX - visual.startX;
-      const dy = visual.targetY - visual.startY;
-      const distance = Math.sqrt(dx * dx + dy * dy);
-      const curve = Math.min(22, Math.max(8, distance * 0.05)) * visual.attacker.facing;
-      const perpendicularX = distance === 0 ? 0 : -dy / distance;
-      const perpendicularY = distance === 0 ? 0 : dx / distance;
-      const pointAt = (t: number): { x: number; y: number } => {
-        const bend = Math.sin(t * Math.PI) * curve;
-        return {
-          x: Phaser.Math.Linear(visual.startX, visual.targetX, t) + perpendicularX * bend,
-          y: Phaser.Math.Linear(visual.startY, visual.targetY, t) + perpendicularY * bend,
-        };
-      };
-      const point = pointAt(progress);
-      const nextPoint = pointAt(Math.min(1, progress + 0.01));
-      const angle = Phaser.Math.Angle.Between(point.x, point.y, nextPoint.x, nextPoint.y);
-      visual.hook.setPosition(point.x, point.y).setRotation(angle);
-      visual.cables.forEach((cable, index) => {
-        const cableProgress = (index + 0.5) / visual.cables.length;
-        const cablePoint = pointAt(cableProgress);
-        const cableNextPoint = pointAt(Math.min(1, cableProgress + 0.01));
-        const visible = cableProgress <= progress;
-        cable.setVisible(visible);
-        if (visible) {
-          cable.setPosition(cablePoint.x, cablePoint.y)
-            .setRotation(Phaser.Math.Angle.Between(cablePoint.x, cablePoint.y, cableNextPoint.x, cableNextPoint.y));
-        }
-      });
-      if (progress >= 1) {
-        visual.hook.destroy();
-        visual.cables.forEach((cable) => cable.destroy());
-        return false;
-      }
-      return true;
-    });
-  }
-
   private spawnSwordShards(attacker: Fighter): void {
-    [1, 2, 3].forEach((step) => {
-      this.time.delayedCall(step * 130, () => {
-        if (!attacker.active) return;
-        const x = attacker.x + attacker.facing * (90 + step * 75);
-        const y = this.settings.map === 'void' ? 503 : 561;
-        const shard = this.add.triangle(x, y, 0, 38, 18, 0, 36, 38, attacker.fighterConfig.color, 0.85)
-          .setDepth(8).setScale(attacker.facing, 1);
-        this.tweens.add({ targets: shard, y: y - 26, alpha: 0, duration: 280, onComplete: () => shard.destroy() });
-        const target = attacker === this.p1 ? this.p2 : this.p1;
-        const rect = new Phaser.Geom.Rectangle(x - 28, y - 75, 56, 80);
-        if (Phaser.Geom.Intersects.RectangleToRectangle(rect, target.getHurtbox())) {
-          if (target.receiveBonusHit(5, attacker.facing * 120, -90, this.time.now, attacker, 140)) {
-            this.damageNumber(target.x, target.y - 100, 5);
+    const surface = this.swordSurfaceAt(attacker);
+    if (!surface) return;
+    const target = attacker === this.p1 ? this.p2 : this.p1;
+    Array.from({ length: combatTuning.swordBladeWaveCount }, (_, index) => index + 1)
+      .forEach((step) => {
+        this.time.delayedCall(step * combatTuning.swordBladeWaveStepMs, () => {
+          if (!attacker.active) return;
+          const positions = swordWavePositions(attacker.x, surface.left, surface.right, step);
+          const hitAreas = positions.map((x) => {
+            this.createSwordBlade(x, surface.top, attacker.fighterConfig.color);
+            return new Phaser.Geom.Rectangle(x - 22, surface.top - 94, 44, 96);
+          });
+          if (hitAreas.some((area) => Phaser.Geom.Intersects.RectangleToRectangle(
+            area,
+            target.getHurtbox(),
+          ))) {
+            const direction = target.x >= attacker.x ? 1 : -1;
+            if (target.receiveBonusHit(5, direction * 120, -90, this.time.now, attacker, 140)) {
+              this.damageNumber(target.x, target.y - 100, 5);
+            }
           }
-        }
+        });
       });
+  }
+
+  private swordSurfaceAt(attacker: Fighter): SwordSurface | undefined {
+    const feetY = attacker.bodyRef.bottom;
+    const surfaces: SwordSurface[] = this.settings.map === 'void'
+      ? voidPlatforms.map((platform) => ({
+        left: platform.x - platform.width / 2,
+        right: platform.x + platform.width / 2,
+        top: platform.y - platform.height / 2,
+      }))
+      : [{ left: 0, right: 1280, top: combatTuning.meadowGroundTop }];
+    return surfaces
+      .filter((surface) => attacker.x >= surface.left && attacker.x <= surface.right)
+      .sort((a, b) => Math.abs(a.top - feetY) - Math.abs(b.top - feetY))
+      .find((surface) => Math.abs(surface.top - feetY) <= 28);
+  }
+
+  private createSwordBlade(x: number, surfaceTop: number, color: number): void {
+    const blade = this.add.graphics({ x, y: surfaceTop + 12 }).setDepth(16);
+    const bladePoints = [
+      new Phaser.Geom.Point(-14, 0),
+      new Phaser.Geom.Point(-16, -72),
+      new Phaser.Geom.Point(0, -96),
+      new Phaser.Geom.Point(16, -72),
+      new Phaser.Geom.Point(14, 0),
+    ];
+    blade.fillStyle(0xdfe5ef, 0.98).fillPoints(bladePoints, true);
+    blade.lineStyle(4, 0x090d18, 1).strokePoints(bladePoints, true);
+    blade.lineStyle(2, 0xffffff, 0.72)
+      .lineBetween(0, -90, 0, -4)
+      .lineBetween(0, -90, 12, -70);
+    blade.setScale(1, 0.08);
+    const maskSource = this.make.graphics({ x: 0, y: 0 });
+    maskSource.fillStyle(0xffffff).fillRect(x - 30, surfaceTop - 112, 60, 112);
+    const groundMask = maskSource.createGeometryMask();
+    blade.setMask(groundMask);
+    const glow = this.add.ellipse(x, surfaceTop, 38, 10, color, 0.68).setDepth(15);
+    this.tweens.add({
+      targets: blade,
+      scaleY: 1,
+      duration: 125,
+      ease: 'Back.Out',
     });
+    this.tweens.add({
+      targets: [blade, glow],
+      y: '-=8',
+      alpha: 0,
+      delay: 250,
+      duration: 230,
+      onComplete: () => {
+        blade.destroy();
+        glow.destroy();
+        groundMask.destroy();
+        maskSource.destroy();
+      },
+    });
+  }
+
+  private updateSwordSlamTrail(fighter: Fighter, now: number): void {
+    const attack = fighter.currentAttack;
+    if (attack?.config.id !== 'sword-slam') {
+      this.swordTrailAt.delete(fighter.playerNumber);
+      return;
+    }
+    const nextTrailAt = this.swordTrailAt.get(fighter.playerNumber) ?? 0;
+    if (now < nextTrailAt) return;
+    this.swordTrailAt.set(fighter.playerNumber, now + 42);
+    const descending = attack.phase === 'active';
+    const ghost = this.add.rectangle(
+      fighter.x,
+      fighter.y + (descending ? -38 : 38),
+      descending ? 18 : 24,
+      descending ? 34 : 24,
+      fighter.fighterConfig.color,
+      0.62,
+    ).setStrokeStyle(2, 0xffffff, 0.24).setDepth(9);
+    this.tweens.add({
+      targets: ghost,
+      alpha: 0,
+      scale: 0.42,
+      y: ghost.y + (descending ? -30 : 30),
+      duration: 210,
+      onComplete: () => ghost.destroy(),
+    });
+  }
+
+  private swordSlamImpact(fighter: Fighter): void {
+    const color = fighter.fighterConfig.color;
+    const ring = this.add.ellipse(fighter.x, fighter.y + 5, 52, 14, color, 0.6)
+      .setStrokeStyle(5, 0xffffff, 0.7).setDepth(18);
+    this.tweens.add({
+      targets: ring,
+      scaleX: 3.2,
+      scaleY: 1.8,
+      alpha: 0,
+      duration: 260,
+      onComplete: () => ring.destroy(),
+    });
+    for (let index = -2; index <= 2; index += 1) {
+      const debris = this.add.rectangle(
+        fighter.x + index * 12,
+        fighter.y + 2,
+        8,
+        16,
+        index % 2 === 0 ? 0xffffff : color,
+        0.9,
+      ).setDepth(19);
+      this.tweens.add({
+        targets: debris,
+        x: debris.x + index * 24,
+        y: debris.y - 32 - Math.abs(index) * 9,
+        angle: index * 70,
+        alpha: 0,
+        duration: 300,
+        onComplete: () => debris.destroy(),
+      });
+    }
+    this.cameras.main.shake(150, 0.01);
   }
 
   private attackVisual(fighter: Fighter, kind: AttackKind): void {
     const color = fighter.fighterConfig.color;
+    if (fighter.fighterConfig.id === 'sword' && kind === 'skill') return;
+    this.weaponTrail(fighter, kind);
     if (fighter.fighterConfig.id === 'sword') {
       const arc = this.add.arc(
         fighter.x + fighter.facing * 62, fighter.y - 50,
@@ -698,23 +747,91 @@ export class FightScene extends Phaser.Scene {
       return;
     }
     if (fighter.fighterConfig.id === 'minigun') {
-      if (kind === 'skill') return;
-      const count = kind === 'ultimate' ? 9 : kind === 'skill' ? 6 : 3;
-      for (let index = 0; index < count; index += 1) {
-        const bullet = this.add.rectangle(
-          fighter.x + fighter.facing * (70 + index * 34),
-          fighter.y - 53 + (index % 2) * 8,
-          kind === 'ultimate' ? 30 : 20,
-          7,
-          index % 2 ? 0xffffff : color,
-          0.9,
+      if (kind === 'ultimate') return;
+      if (kind === 'skill') {
+        const hookX = fighter.x + fighter.facing * 330;
+        const chain = this.add.rectangle(
+          fighter.x + fighter.facing * 170,
+          fighter.y - 32,
+          320,
+          4,
+          0xc6f5ff,
+          0.85,
         ).setDepth(16);
+        const hook = this.add.circle(hookX, fighter.y - 32, 12, color, 0.95)
+          .setStrokeStyle(4, 0xffffff, 0.8).setDepth(17);
         this.tweens.add({
-          targets: bullet,
-          x: bullet.x + fighter.facing * 95,
+          targets: [chain, hook],
           alpha: 0,
-          duration: 320 + index * 24,
-          onComplete: () => bullet.destroy(),
+          duration: 280,
+          onComplete: () => { chain.destroy(); hook.destroy(); },
+        });
+        return;
+      }
+      const attack = fighter.currentAttack;
+      if (!attack) return;
+      const target = fighter === this.p1 ? this.p2 : this.p1;
+      const sequence = fighter.currentAttack?.sequence ?? 1;
+      const count = minigunBurstCount(sequence);
+      const bulletStartOffset = 60;
+      const maxRange = fighter.fighterConfig.basicAttack.hitboxOffsetX
+        + fighter.fighterConfig.basicAttack.hitboxWidth / 2;
+      const bulletTravel = maxRange - bulletStartOffset;
+      const bulletSpeed = (756 / 249) * 0.75;
+      for (let index = 0; index < count; index += 1) {
+        this.time.delayedCall(index * 66, () => {
+          if (target.state === 'KO') return;
+          const bulletStartX = Phaser.Math.Clamp(
+            fighter.x + fighter.facing * bulletStartOffset,
+            0,
+            this.scale.width,
+          );
+          const bulletEndX = Phaser.Math.Clamp(
+            bulletStartX + fighter.facing * bulletTravel,
+            0,
+            this.scale.width,
+          );
+          const bulletBorder = this.add.rectangle(
+            bulletStartX,
+            fighter.y - 33 + (index % 2) * 4,
+            20,
+            7,
+            0x111111,
+            0.98,
+          ).setDepth(16);
+          const bulletCore = this.add.rectangle(
+            bulletBorder.x,
+            bulletBorder.y,
+            14,
+            3,
+            index % 2 ? 0xffffff : color,
+            0.95,
+          ).setDepth(17);
+          let hit = false;
+          this.tweens.add({
+            targets: [bulletBorder, bulletCore],
+            x: bulletEndX,
+            duration: Math.max(1, Math.round(Math.abs(bulletEndX - bulletStartX) / bulletSpeed)),
+            onUpdate: () => {
+              if (hit || target.state === 'KO') return;
+              const bulletHitbox = new Phaser.Geom.Rectangle(
+                bulletBorder.x - 10,
+                bulletBorder.y - 4,
+                20,
+                8,
+              );
+              if (!Phaser.Geom.Intersects.RectangleToRectangle(bulletHitbox, target.getBodyHurtbox())) return;
+              hit = true;
+              bulletBorder.destroy();
+              bulletCore.destroy();
+              if (target.receiveBonusHit(2, 0, 0, this.time.now, fighter, 0, 'basic', true)) {
+                this.sounds.play('hit');
+                this.damageNumber(target.x, target.y - 82, target.lastDamageTaken);
+                this.combat.showHitEffect(target.x, target.y - 24, fighter.fighterConfig.color);
+              }
+            },
+            onComplete: () => { bulletBorder.destroy(); bulletCore.destroy(); },
+          });
         });
       }
       return;
@@ -780,38 +897,410 @@ export class FightScene extends Phaser.Scene {
     });
   }
 
-  private ultimateIntro(fighter: Fighter): void {
-    const shade = this.add.rectangle(640, 360, 1280, 720, 0x02030a, 0.72).setDepth(40);
-    const line = this.add.text(640, 338, fighter.fighterConfig.ultimate.name, {
-      fontFamily: 'Arial Black, sans-serif', fontSize: '54px', color: '#ffffff',
-      stroke: Phaser.Display.Color.IntegerToColor(fighter.fighterConfig.color).rgba,
-      strokeThickness: 7,
-    }).setOrigin(0.5).setDepth(41);
-    this.tweens.add({ targets: [shade, line], alpha: 0, delay: 170, duration: 240, onComplete: () => { shade.destroy(); line.destroy(); } });
-  }
+  private startSwordUltimateCut(attacker: Fighter, attack: ActiveAttack): void {
+    const target = attacker === this.p1 ? this.p2 : this.p1;
+    const freezeUntil = this.time.now + combatTuning.swordUltimateHitMs;
+    if (this.swordUltimateFreeze && this.time.now < this.swordUltimateFreeze.until) {
+      this.swordUltimateFreeze.until = Math.max(this.swordUltimateFreeze.until, freezeUntil);
+    } else {
+      this.swordUltimateFreeze = {
+        until: freezeUntil,
+        p1: { x: this.p1.x, y: this.p1.y },
+        p2: { x: this.p2.x, y: this.p2.y },
+      };
+    }
+    const trails: Phaser.GameObjects.Graphics[] = [];
+    const points: Phaser.GameObjects.Ellipse[] = [];
+    let effectActive = true;
+    const pointCount = combatTuning.swordUltimateTrailCount;
+    const baseAngle = Phaser.Math.FloatBetween(-Math.PI, Math.PI);
 
-  private rushVisual(target: Fighter, color: number): void {
-    for (let i = 0; i < 7; i += 1) {
-      this.time.delayedCall(i * 45, () => {
-        const burst = this.add.circle(
-          target.x + Phaser.Math.Between(-38, 38),
-          target.y - Phaser.Math.Between(25, 82),
-          Phaser.Math.Between(10, 23), color, 0.75,
-        ).setDepth(20);
-        this.tweens.add({ targets: burst, scale: 1.8, alpha: 0, duration: 150, onComplete: () => burst.destroy() });
+    for (let index = 0; index < pointCount; index += 1) {
+      this.time.delayedCall(index * combatTuning.swordUltimateTrailStaggerMs, () => {
+        if (!effectActive) return;
+        const angle = evenlySpacedCutAngle(index, pointCount, baseAngle);
+        const path = screenCutPath(
+          Phaser.Math.Between(240, 1040),
+          Phaser.Math.Between(150, 570),
+          angle,
+          1280,
+          720,
+          28,
+        );
+        const point = this.add.ellipse(path.startX, path.startY, 13, 5, 0xffffff, 0.24)
+          .setRotation(angle)
+          .setDepth(43);
+        const trail = this.add.graphics().setDepth(42);
+        points.push(point);
+        trails.push(trail);
+        this.tweens.add({
+          targets: point,
+          x: path.endX,
+          y: path.endY,
+          duration: combatTuning.swordUltimatePointTravelMs,
+          ease: 'Linear',
+          onUpdate: () => {
+            if (!effectActive || !trail.active || !point.active) return;
+            trail.clear()
+              .lineStyle(combatTuning.swordUltimateTrailWidth, 0xffffff, 0.76)
+              .lineBetween(path.startX, path.startY, point.x, point.y);
+          },
+          onComplete: () => point.destroy(),
+        });
       });
     }
+
+    this.time.delayedCall(combatTuning.swordUltimateTrailClearMs, () => {
+      effectActive = false;
+      points.forEach((point) => {
+        if (point.active) point.destroy();
+      });
+      trails.forEach((trail) => {
+        if (trail.active) trail.destroy();
+      });
+    });
+
+    this.time.delayedCall(combatTuning.swordUltimateHitMs, () => {
+      const liveAttack = attacker.currentAttack;
+      if (!liveAttack || liveAttack.id !== attack.id || liveAttack.phase !== 'active') return;
+      const { config, direction } = attack;
+      const centerX = attacker.x + config.hitboxOffsetX * direction;
+      const centerY = attacker.y - 24 + config.hitboxOffsetY;
+      const hitbox = new Phaser.Geom.Rectangle(
+        centerX - config.hitboxWidth / 2,
+        centerY - config.hitboxHeight / 2,
+        config.hitboxWidth,
+        config.hitboxHeight,
+      );
+      if (Phaser.Geom.Intersects.RectangleToRectangle(hitbox, target.getBodyHurtbox())
+        && target.receiveAttackSnapshot(attacker, attack, this.time.now)) {
+        this.onHit(attacker, target, attack);
+      }
+    });
   }
 
-  private slashLine(x: number, y: number, color: number, index: number): void {
-    const line = this.add.rectangle(x, y, 150, 8, color, 0.85)
-      .setRotation(index % 2 === 0 ? -0.5 : 0.5).setDepth(21);
-    this.tweens.add({ targets: line, scaleX: 1.6, alpha: 0, duration: 130, onComplete: () => line.destroy() });
+  private weaponTrail(fighter: Fighter, kind: AttackKind): void {
+    const color = fighter.fighterConfig.color;
+    const strength = kind === 'ultimate' ? 1.45 : kind === 'skill' ? 1.2 : 1;
+    const isRanged = fighter.fighterConfig.id === 'minigun';
+    const count = isRanged ? 2 : 4;
+    for (let index = 0; index < count; index += 1) {
+      const progress = index / Math.max(1, count - 1);
+      const ghost = this.add.image(
+        fighter.x + fighter.facing * (12 + progress * 25),
+        fighter.y - 25 - progress * 5,
+        `weapon-${fighter.fighterConfig.id}`,
+      )
+        .setOrigin(0.12, 0.5)
+        .setTint(index % 2 ? color : 0xffffff)
+        .setAlpha(0.22 + progress * 0.18)
+        .setDepth(14)
+        .setRotation(fighter.facing * (-1.05 + progress * 1.25))
+        .setScale(fighter.facing * (0.75 + progress * 0.18) * strength, (0.75 + progress * 0.18) * strength);
+      this.tweens.add({
+        targets: ghost,
+        x: ghost.x + fighter.facing * (isRanged ? 28 : 48),
+        rotation: ghost.rotation + fighter.facing * (isRanged ? 0.08 : 0.55),
+        alpha: 0,
+        scaleY: ghost.scaleY * 1.15,
+        duration: 120 + index * 24,
+        onComplete: () => ghost.destroy(),
+      });
+    }
+
+    const flashX = fighter.x + fighter.facing * (isRanged ? 78 : 58);
+    const flashY = fighter.y - (fighter.fighterConfig.id === 'fist' && kind === 'skill' ? 82 : 48);
+    const flash = this.add.star(
+      flashX,
+      flashY,
+      kind === 'ultimate' ? 10 : 7,
+      kind === 'ultimate' ? 14 : 8,
+      kind === 'ultimate' ? 42 : 25,
+      color,
+      0.8,
+    ).setStrokeStyle(3, 0xffffff, 0.75).setDepth(18);
+    this.tweens.add({
+      targets: flash,
+      scale: 1.7,
+      rotation: fighter.facing * 0.6,
+      alpha: 0,
+      duration: kind === 'ultimate' ? 240 : 150,
+      onComplete: () => flash.destroy(),
+    });
+  }
+
+  private ultimateIntro(fighter: Fighter): void {
+    const swordUltimate = fighter.fighterConfig.id === 'sword';
+    const titleColor = fighter.fighterConfig.id === 'minigun'
+      && fighter.playerNumber === 2
+      && this.p1.fighterConfig.id === 'minigun'
+      ? 0xff4f64
+      : fighter.fighterConfig.color;
+    const shade = this.add.rectangle(640, 360, 1280, 720, 0x02030a, 0.72).setDepth(40);
+    const line = this.add.text(
+      640,
+      338,
+      swordUltimate ? '가루로 만들어 주지' : fighter.fighterConfig.ultimate.name,
+      {
+      fontFamily: fontDisplay, fontStyle: 'bold', fontSize: '50px', color: '#ffffff',
+      stroke: Phaser.Display.Color.IntegerToColor(titleColor).rgba,
+      strokeThickness: 7,
+      },
+    ).setOrigin(0.5).setDepth(44);
+    this.tweens.add({
+      targets: [shade, line],
+      alpha: 0,
+      delay: swordUltimate ? combatTuning.swordUltimateTitleHoldMs : 170,
+      duration: 240,
+      onComplete: () => { shade.destroy(); line.destroy(); },
+    });
+  }
+
+  private holdFighterAt(fighter: Fighter, position: { x: number; y: number }): void {
+    const offsetX = position.x - fighter.x;
+    const offsetY = position.y - fighter.y;
+    fighter.setPosition(position.x, position.y).setVelocity(0, 0).setAcceleration(0, 0);
+    fighter.weapon.setPosition(fighter.weapon.x + offsetX, fighter.weapon.y + offsetY);
+    fighter.minigunGrip?.setPosition(
+      fighter.minigunGrip.x + offsetX,
+      fighter.minigunGrip.y + offsetY,
+    );
+  }
+
+  private startHeavyPunchCharge(fighter: Fighter, attack: ActiveAttack): void {
+    const color = fighter.displayTint;
+    const outer = this.add.circle(fighter.weapon.x, fighter.weapon.y, 20, color, 0.08)
+      .setStrokeStyle(4, color, 0.9).setDepth(19);
+    const inner = this.add.circle(fighter.weapon.x, fighter.weapon.y, 8, 0xffffff, 0.72)
+      .setDepth(20);
+    let cleanedUp = false;
+
+    const cleanup = () => {
+      if (cleanedUp) return;
+      cleanedUp = true;
+      this.events.off(Phaser.Scenes.Events.UPDATE, update);
+      outer.destroy();
+      inner.destroy();
+    };
+    const update = () => {
+      if (!fighter.currentAttack
+        || fighter.currentAttack.id !== attack.id
+        || fighter.currentAttack.phase !== 'recovery') {
+        cleanup();
+        return;
+      }
+      const recoveryStartedAt = attack.startedAt
+        + attack.config.startupMs + attack.config.activeMs;
+      const progress = Phaser.Math.Clamp(
+        (this.time.now - recoveryStartedAt) / 210,
+        0,
+        1,
+      );
+      const pulse = 1 + Math.sin(this.time.now / 38) * 0.12;
+      outer.setPosition(fighter.weapon.x, fighter.weapon.y)
+        .setScale((0.55 + progress * 1.15) * pulse)
+        .setAlpha(0.35 + progress * 0.65);
+      inner.setPosition(fighter.weapon.x, fighter.weapon.y)
+        .setScale(0.55 + progress * 0.7)
+        .setAlpha(0.45 + progress * 0.5);
+    };
+
+    this.events.on(Phaser.Scenes.Events.UPDATE, update);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, cleanup);
+    update();
+  }
+
+  private heavyPunchReleaseVisual(fighter: Fighter): void {
+    const color = fighter.displayTint;
+    const impactX = fighter.x + fighter.facing * 66;
+    const impactY = fighter.y - 38;
+    const shock = this.add.triangle(
+      impactX,
+      impactY,
+      0,
+      -24,
+      94,
+      0,
+      0,
+      24,
+      color,
+      0.62,
+    ).setScale(fighter.facing, 1).setDepth(16);
+    const ring = this.add.circle(impactX, impactY, 18, color, 0.12)
+      .setStrokeStyle(6, 0xffffff, 0.82).setDepth(17);
+    this.tweens.add({
+      targets: shock,
+      x: shock.x + fighter.facing * 40,
+      scaleX: fighter.facing * 1.35,
+      alpha: 0,
+      duration: 170,
+      ease: 'Cubic.Out',
+      onComplete: () => shock.destroy(),
+    });
+    this.tweens.add({
+      targets: ring,
+      scale: 2,
+      alpha: 0,
+      duration: 190,
+      onComplete: () => ring.destroy(),
+    });
+  }
+
+  private startFistRushFinisher(fighter: Fighter, attack: ActiveAttack): void {
+    if (attack.sequence < 4) return;
+    const chargeDelay = attack.config.startupMs + attack.config.activeMs + 16;
+    this.time.delayedCall(chargeDelay, () => {
+      const liveAttack = fighter.currentAttack;
+      if (!liveAttack || liveAttack.id !== attack.id || liveAttack.phase !== 'recovery') return;
+      this.startHeavyPunchCharge(fighter, attack);
+    });
+    const finisherDelay = attack.config.startupMs + attack.config.activeMs + 210;
+    this.time.delayedCall(finisherDelay, () => {
+      const liveAttack = fighter.currentAttack;
+      if (!liveAttack || liveAttack.id !== attack.id || liveAttack.phase !== 'recovery') return;
+      this.heavyPunchReleaseVisual(fighter);
+      const target = fighter === this.p1 ? this.p2 : this.p1;
+      if (!attack.hitTicks.has(target.playerNumber)) return;
+      if (target.receiveBonusHit(
+        15,
+        attack.direction * attack.config.knockbackX,
+        attack.config.knockbackY,
+        this.time.now,
+        fighter,
+        attack.config.hitstunMs,
+        'ultimate',
+      )) {
+        this.onHit(fighter, target, attack);
+      }
+    });
+  }
+
+  private startFistRushDots(fighter: Fighter, attack: ActiveAttack): void {
+    const color = fighter.displayTint;
+    const dots = [
+      this.add.circle(fighter.x, fighter.y - 42, 14, color, 1),
+      this.add.circle(fighter.x, fighter.y - 42, 14, color, 1),
+      this.add.circle(fighter.x, fighter.y - 42, 14, color, 1),
+      this.add.circle(fighter.x, fighter.y - 42, 14, color, 1),
+    ].map((dot) => dot.setStrokeStyle(3, 0xffffff, 0.72).setDepth(21));
+    const trails = [
+      this.add.graphics().setDepth(20),
+      this.add.graphics().setDepth(20),
+      this.add.graphics().setDepth(20),
+      this.add.graphics().setDepth(20),
+    ];
+    const trailPoints: Array<Array<{ x: number; y: number }>> = [[], [], [], []];
+    const startTime = this.time.now;
+    const cycleMs = Phaser.Math.Between(155, 185);
+    const forwardReach = attack.config.hitboxOffsetX + attack.config.hitboxWidth / 2;
+    const centerVertical = -24 + attack.config.hitboxOffsetY;
+    const verticalReach = attack.config.hitboxHeight / 2;
+    const verticalBandCount = 6;
+    const bandOffset = Phaser.Math.Between(0, verticalBandCount - 1);
+    const trajectories = dots.map(() => ({
+      cycle: -1,
+      arcOffset: 0,
+      endOffset: 0,
+      horizontalControl: 0.5,
+    }));
+    let cleanedUp = false;
+
+    const cleanup = () => {
+      if (cleanedUp) return;
+      cleanedUp = true;
+      this.events.off(Phaser.Scenes.Events.UPDATE, update);
+      dots.forEach((dot) => dot.destroy());
+      trails.forEach((trail) => trail.destroy());
+    };
+    const pointOnRushParabola = (
+      progress: number,
+      trajectory: { arcOffset: number; endOffset: number; horizontalControl: number },
+    ) => {
+      const inverse = 1 - progress;
+      const arc = 4 * progress * (1 - progress);
+      return {
+        x: 2 * inverse * progress * forwardReach * trajectory.horizontalControl
+          + progress * progress * forwardReach,
+        y: Phaser.Math.Clamp(
+          centerVertical + trajectory.arcOffset * arc + trajectory.endOffset * progress,
+          centerVertical - verticalReach,
+          centerVertical + verticalReach,
+        ),
+      };
+    };
+    const update = () => {
+      if (!fighter.currentAttack
+        || fighter.currentAttack.id !== attack.id
+        || fighter.currentAttack.phase === 'recovery') {
+        cleanup();
+        return;
+      }
+      const elapsed = this.time.now - startTime;
+      dots.forEach((dot, index) => {
+        const staggeredElapsed = Math.max(0, elapsed - index * cycleMs / dots.length);
+        const cycle = Math.floor(staggeredElapsed / cycleMs);
+        const progress = (staggeredElapsed / cycleMs) % 1;
+        const trajectory = trajectories[index];
+        if (trajectory.cycle !== cycle) {
+          trajectory.cycle = cycle;
+          const band = (bandOffset + cycle * dots.length + index) % verticalBandCount;
+          const bandProgress = (band + Phaser.Math.FloatBetween(0.12, 0.88))
+            / verticalBandCount;
+          trajectory.arcOffset = Phaser.Math.Linear(
+            -verticalReach,
+            verticalReach,
+            bandProgress,
+          );
+          trajectory.endOffset = Phaser.Math.FloatBetween(-verticalReach, verticalReach);
+          trajectory.horizontalControl = Phaser.Math.FloatBetween(0.28, 0.72);
+        }
+        const point = pointOnRushParabola(progress, trajectory);
+        dot.setPosition(
+          fighter.x + fighter.facing * point.x,
+          fighter.y + point.y,
+        ).setAlpha(fighter.alpha);
+
+        const history = trailPoints[index];
+        const previous = history[0];
+        if (!previous || Phaser.Math.Distance.Between(previous.x, previous.y, dot.x, dot.y) < 34) {
+          history.unshift({ x: dot.x, y: dot.y });
+        } else {
+          history.length = 0;
+          history.push({ x: dot.x, y: dot.y });
+        }
+        history.splice(8);
+
+        const trail = trails[index].clear();
+        for (let pointIndex = 0; pointIndex < history.length - 1; pointIndex += 1) {
+          const head = history[pointIndex];
+          const tail = history[pointIndex + 1];
+          const dx = head.x - tail.x;
+          const dy = head.y - tail.y;
+          const length = Math.max(1, Math.hypot(dx, dy));
+          const width = 10 * (1 - pointIndex / Math.max(1, history.length - 1));
+          const normalX = -dy / length * width;
+          const normalY = dx / length * width;
+          const alpha = 0.5 * (1 - pointIndex / Math.max(1, history.length - 1));
+          trail.fillStyle(color, alpha * fighter.alpha).fillTriangle(
+            head.x + normalX,
+            head.y + normalY,
+            head.x - normalX,
+            head.y - normalY,
+            tail.x,
+            tail.y,
+          );
+        }
+      });
+    };
+
+    this.events.on(Phaser.Scenes.Events.UPDATE, update);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, cleanup);
+    update();
   }
 
   private damageNumber(x: number, y: number, damage: number): void {
     const text = this.add.text(x, y, `-${damage}`, {
-      fontFamily: 'Arial Black, sans-serif', fontSize: '26px', color: '#fff3a6',
+      fontFamily: fontTech, fontStyle: 'bold', fontSize: '24px', color: '#fff3a6',
       stroke: '#6b1320', strokeThickness: 5,
     }).setOrigin(0.5).setDepth(70);
     this.tweens.add({ targets: text, y: y - 52, alpha: 0, duration: 650, ease: 'Cubic.Out', onComplete: () => text.destroy() });
@@ -829,7 +1318,7 @@ export class FightScene extends Phaser.Scene {
     this.p2.controlEnabled = false;
     this.countdown?.destroy();
     this.countdown = this.add.text(640, 300, '3', {
-      fontFamily: 'Arial Black, sans-serif', fontSize: '118px', color: '#ffffff',
+      fontFamily: fontTech, fontStyle: 'bold', fontSize: '112px', color: '#ffffff',
       stroke: '#192044', strokeThickness: 12,
     }).setOrigin(0.5).setDepth(90);
     const steps = ['3', '2', '1', 'FIGHT!'];
@@ -855,7 +1344,7 @@ export class FightScene extends Phaser.Scene {
     this.sounds.play('ko');
     const label = result === 'draw' ? 'DOUBLE KO · DRAW' : `${result === 'p1' ? '1P' : '2P'}  K.O.`;
     this.add.text(640, 300, label, {
-      fontFamily: 'Arial Black, sans-serif', fontSize: '78px', color: '#ffffff',
+      fontFamily: fontTech, fontStyle: 'bold', fontSize: '72px', color: '#ffffff',
       stroke: '#7e1b39', strokeThickness: 12,
     }).setOrigin(0.5).setDepth(100);
     const outcome = this.rounds.record(result);
@@ -882,29 +1371,96 @@ export class FightScene extends Phaser.Scene {
 
   private drawArena(): void {
     if (this.settings.map === 'meadow') {
-      this.cameras.main.setBackgroundColor(0x7cc7e8);
+      this.cameras.main.setBackgroundColor(0x4ba7d1);
       const g = this.add.graphics();
-      g.fillStyle(0xcfeeff).fillCircle(1050, 125, 54);
-      g.fillStyle(0x91d78b).fillEllipse(240, 520, 650, 260).fillEllipse(960, 520, 780, 290);
+      g.fillGradientStyle(0x3896c7, 0x3896c7, 0xa5e7ee, 0xdff7e6, 1).fillRect(0, 0, 1280, 560);
+      g.fillStyle(0xfff3b1, 0.18).fillCircle(1050, 132, 88);
+      g.fillStyle(0xfff3b1).fillCircle(1050, 132, 50);
+      g.lineStyle(3, 0xffffff, 0.35).strokeCircle(1050, 132, 64);
+      g.fillStyle(0x5d91a2, 0.45).fillTriangle(0, 500, 260, 210, 535, 500);
+      g.fillStyle(0x4d8297, 0.4).fillTriangle(360, 500, 650, 180, 940, 500);
+      g.fillStyle(0x5b94a3, 0.36).fillTriangle(790, 500, 1070, 240, 1280, 500);
+      g.fillStyle(0x8fd6a1).fillEllipse(210, 520, 700, 270).fillEllipse(980, 520, 820, 300);
+      g.fillStyle(0x66b982, 0.9).fillEllipse(590, 555, 680, 215);
+      g.lineStyle(3, 0xd9fff2, 0.45)
+        .beginPath().arc(240, 480, 330, 3.55, 5.75).strokePath()
+        .beginPath().arc(945, 490, 390, 3.45, 5.85).strokePath();
+      [
+        [180, 155, 150], [510, 115, 110], [820, 190, 125],
+      ].forEach(([x, y, width]) => {
+        g.fillStyle(0xffffff, 0.56)
+          .fillEllipse(x, y, width, 34)
+          .fillCircle(x - width * 0.18, y - 12, 25)
+          .fillCircle(x + width * 0.08, y - 17, 31);
+      });
+      for (let index = 0; index < 24; index += 1) {
+        const x = 30 + index * 54;
+        const height = 10 + (index % 4) * 5;
+        g.lineStyle(2, index % 3 === 0 ? 0xb9ff8f : 0x74d891, 0.55)
+          .lineBetween(
+            x,
+            combatTuning.meadowGroundTop + 2,
+            x + (index % 2 ? 5 : -5),
+            combatTuning.meadowGroundTop + 2 - height,
+          );
+      }
       this.platforms = this.physics.add.staticGroup();
-      const ground = this.platforms.create(640, 620, 'pixel') as Phaser.Physics.Arcade.Sprite;
-      ground.setDisplaySize(1280, 160).setTint(0x3c8959).refreshBody();
+      const groundCenter = combatTuning.meadowGroundTop + combatTuning.meadowGroundHeight / 2;
+      const ground = this.platforms.create(640, groundCenter, 'pixel') as Phaser.Physics.Arcade.Sprite;
+      ground.setDisplaySize(1280, combatTuning.meadowGroundHeight).setTint(0x246847).refreshBody();
+      this.add.rectangle(640, combatTuning.meadowGroundTop + 2, 1280, 10, 0x8dea83, 1);
+      this.add.rectangle(640, combatTuning.meadowGroundTop + 10, 1280, 6, 0x3c9e66, 1);
+      for (let x = 18; x < 1280; x += 52) {
+        this.add.polygon(
+          x,
+          combatTuning.meadowGroundTop + 43,
+          [0, -18, 20, -10, 26, 12, 5, 22, -15, 8],
+          0x1c573e,
+          0.34,
+        );
+      }
       this.physics.world.setBounds(24, 0, 1232, 720);
       return;
     }
     this.cameras.main.setBackgroundColor(0x070516);
     const stars = this.add.graphics();
+    stars.fillGradientStyle(0x050318, 0x110827, 0x1e0d3d, 0x050718, 1).fillRect(0, 0, 1280, 720);
+    stars.fillStyle(0x8d4dff, 0.09).fillEllipse(280, 380, 620, 390);
+    stars.fillStyle(0x3de7ff, 0.07).fillEllipse(1020, 280, 520, 310);
+    stars.lineStyle(3, 0x9b78ff, 0.18).strokeEllipse(1030, 170, 300, 95);
+    stars.fillStyle(0x261b52, 0.9).fillCircle(1030, 170, 74);
+    stars.fillStyle(0x534589, 0.45).fillCircle(1005, 145, 16);
     for (let i = 0; i < 85; i += 1) {
       stars.fillStyle(i % 4 === 0 ? 0xa884ff : 0xffffff, Phaser.Math.FloatBetween(0.2, 0.8));
       stars.fillCircle(Phaser.Math.Between(0, 1280), Phaser.Math.Between(110, 650), Phaser.Math.Between(1, 3));
     }
+    for (let index = 0; index < 12; index += 1) {
+      const shard = this.add.polygon(
+        35 + (index * 127) % 1210,
+        170 + (index * 83) % 470,
+        [0, -14, 8, 0, 0, 25, -7, 1],
+        index % 2 ? 0x5f46a0 : 0x226f88,
+        0.24,
+      ).setRotation(index * 0.37);
+      this.tweens.add({
+        targets: shard,
+        y: shard.y - 14,
+        rotation: shard.rotation + 0.5,
+        duration: 1800 + index * 130,
+        yoyo: true,
+        repeat: -1,
+      });
+    }
     this.platforms = this.physics.add.staticGroup();
-    this.addPlatform(640, 245, 650, 38, 0x6c66a8);
-    this.addPlatform(190, 390, 250, 32, 0x4a4985);
-    this.addPlatform(1090, 390, 250, 32, 0x4a4985);
-    this.addPlatform(640, 485, 330, 34, 0x585393);
-    this.addPlatform(250, 600, 270, 30, 0x403d73);
-    this.addPlatform(1030, 600, 270, 30, 0x403d73);
+    voidPlatforms.forEach((platform) => {
+      this.addPlatform(
+        platform.x,
+        platform.y,
+        platform.width,
+        platform.height,
+        platform.tint,
+      );
+    });
     this.add.rectangle(640, 355, 64, 5, 0x75e8ff, 0.25);
     this.add.rectangle(430, 530, 86, 4, 0xb499ff, 0.22).setRotation(-0.12);
     this.add.rectangle(850, 530, 86, 4, 0xb499ff, 0.22).setRotation(0.12);
@@ -912,9 +1468,21 @@ export class FightScene extends Phaser.Scene {
   }
 
   private addPlatform(x: number, y: number, width: number, height: number, tint: number): void {
+    this.add.polygon(
+      x,
+      y + height / 2 + 14,
+      [-width / 2 + 8, -14, width / 2 - 8, -14, width / 2 - 28, 18, -width / 2 + 28, 18],
+      0x110c2c,
+      0.9,
+    ).setStrokeStyle(2, 0x6f55a8, 0.5);
     const platform = this.platforms.create(x, y, 'pixel') as Phaser.Physics.Arcade.Sprite;
     platform.setDisplaySize(width, height).setTint(tint).refreshBody();
-    this.add.rectangle(x, y - 8, width, 4, 0xb499ff, 0.8);
+    this.add.rectangle(x, y - height / 2 + 3, width - 8, 6, 0xb9a4ff, 0.92);
+    this.add.rectangle(x, y + height / 2 - 5, width - 28, 3, 0x33285c, 0.9);
+    [x - width / 2 + 22, x + width / 2 - 22].forEach((lightX) => {
+      const light = this.add.circle(lightX, y, 4, 0x75e8ff, 0.9);
+      this.tweens.add({ targets: light, alpha: 0.25, duration: 680, yoyo: true, repeat: -1 });
+    });
   }
 
   private drawDebug(): void {

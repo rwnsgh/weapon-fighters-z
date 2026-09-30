@@ -19,7 +19,11 @@ describe('fighter roster', () => {
     expect(fighter.startMana).toBe(100);
     expect(fighter.manaRegen).toBe(5);
     expect(fighter.basicAttack.manaCost).toBe(0);
-    expect(fighter.skill.manaCost).toBeGreaterThan(0);
+    if (fighter.id === 'minigun') {
+      expect(fighter.skill.manaCost).toBe(0);
+    } else {
+      expect(fighter.skill.manaCost).toBeGreaterThan(0);
+    }
     expect(fighter.ultimate.manaCost).toBeGreaterThan(fighter.skill.manaCost);
   });
 
@@ -42,8 +46,8 @@ describe('fighter roster', () => {
   it('keeps the revised proposal values for the four completed fighters', () => {
     expect(fighters.minigun.basicAttack.damage).toBe(2);
     expect(fighters.minigun.basicAttack).toMatchObject({
-      hitboxWidth: 648,
-      hitboxOffsetX: 334,
+      hitboxWidth: 518.4,
+      hitboxOffsetX: 408.48,
       hitstunMs: 0,
       knockbackX: 0,
       knockbackY: 0,
@@ -68,18 +72,5 @@ describe('fighter roster', () => {
     expect(apexHeight).toBeGreaterThanOrEqual(148);
     expect(apexHeight).toBeLessThan(160);
     expect(horizontalReach).toBeGreaterThan(220);
-  });
-
-  it('keeps the revised proposal values for the four completed fighters', () => {
-    expect(fighters.minigun.basicAttack.damage).toBe(2);
-    expect(fighters.minigun.ultimate.manaCost).toBe(80);
-    expect(fighters.clock.basicAttack.damage).toBe(3);
-    expect(fighters.clock.skill.manaCost).toBe(20);
-    expect(fighters.clock.ultimate.manaCost).toBe(90);
-    expect(fighters.plant.skill.manaCost).toBe(20);
-    expect(fighters.plant.ultimate.manaCost).toBe(80);
-    expect(fighters.rock.basicAttack.damage).toBe(7);
-    expect(fighters.rock.skill.manaCost).toBe(30);
-    expect(fighters.rock.ultimate.manaCost).toBe(60);
   });
 });

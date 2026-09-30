@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { combatTuning } from './combatTuning';
 import { BootScene } from '../scenes/BootScene';
 import { TitleScene } from '../scenes/TitleScene';
 import { ModeSelectScene } from '../scenes/ModeSelectScene';
@@ -18,7 +19,7 @@ export const gameConfig: Phaser.Types.Core.GameConfig = {
   backgroundColor: '#080b16',
   physics: {
     default: 'arcade',
-    arcade: { gravity: { x: 0, y: 1650 }, debug: false },
+    arcade: { gravity: { x: 0, y: combatTuning.gravityY }, debug: false },
   },
   scale: {
     mode: Phaser.Scale.FIT,
