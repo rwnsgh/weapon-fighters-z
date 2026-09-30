@@ -24,6 +24,7 @@ export type FighterState =
   | 'ATTACK' | 'SKILL' | 'ULTIMATE'
   | 'HITSTUN' | 'STUN' | 'KO' | 'RESPAWN_INVULNERABLE';
 export type AttackPhase = 'startup' | 'active' | 'recovery';
+export type MinigunMode = 'rapid' | 'missile' | 'energy-ball';
 export type FighterStatusEffect =
   | 'invulnerable'
   | 'haste'
@@ -64,6 +65,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   movementMultiplier = 1;
   damageMultiplier = 1;
   lastDamageTaken = 0;
+  minigunMode: MinigunMode = 'rapid';
   private stateUntil = 0;
   private attackCounter = 0;
   private basicCounter = 0;
@@ -85,6 +87,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   readonly minigunGrip?: Phaser.GameObjects.Image;
   readonly playerLabel: Phaser.GameObjects.Text;
   readonly playerMarkerArrow: Phaser.GameObjects.Triangle;
+  readonly minigunModeIcon?: Phaser.GameObjects.Image;
 
   constructor(
     scene: Phaser.Scene,
@@ -133,6 +136,10 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       playerNumber === 1 ? 0x2498ff : 0xff4058,
     ).setOrigin(0.5).setStrokeStyle(3, 0x05070d).setDepth(15).setName(`fighter-player-arrow-${playerNumber}`);
     if (config.id === 'minigun') {
+      this.minigunModeIcon = scene.add.image(x, y - 145, 'minigun-mode-rapid')
+        .setOrigin(0.5).setDisplaySize(64, 64).setDepth(16);
+    }
+    if (config.id === 'minigun') {
       this.minigunGrip = scene.add.image(x, y - 28, 'weapon-minigun-grip')
         .setOrigin(1, 0.5)
         .setTint(tint)
@@ -165,6 +172,8 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     this.facing = facing;
     this.state = 'IDLE';
     this.currentAttack = undefined;
+    this.minigunMode = 'rapid';
+    this.minigunModeIcon?.setTexture('minigun-mode-rapid').setDisplaySize(64, 64);
     this.controlEnabled = false;
     this.invulnerableUntil = 0;
     this.slowedUntil = 0;
@@ -356,10 +365,11 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   }
 
   tryAttack(kind: AttackKind, now: number): boolean {
-    // Minigun's grapple is retired. Reject before buffering, mana consumption,
-    // sounds, poses, and every attack-effect event can be triggered.
-    if (this.fighterConfig.id === 'minigun' && kind === 'skill') return false;
     if (!this.controlEnabled || this.state === 'KO' || this.state === 'RESPAWN_INVULNERABLE') {
+      return false;
+    }
+    if (this.fighterConfig.id === 'minigun' && kind === 'skill') {
+      this.cycleMinigunMode();
       return false;
     }
     if (!this.canStartAttack()) {
@@ -367,6 +377,13 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       return false;
     }
     return this.startAttack(kind, now);
+  }
+
+  private cycleMinigunMode(): void {
+    this.minigunMode = this.minigunMode === 'rapid'
+      ? 'missile'
+      : this.minigunMode === 'missile' ? 'energy-ball' : 'rapid';
+    this.minigunModeIcon?.setTexture(`minigun-mode-${this.minigunMode}`).setDisplaySize(64, 64);
   }
 
   private canStartAttack(): boolean {
@@ -992,6 +1009,10 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       .setVisible(this.visible);
     this.playerMarkerArrow
       .setPosition(this.x, this.y - 66)
+      .setAlpha(this.alpha)
+      .setVisible(this.visible);
+    this.minigunModeIcon
+      ?.setPosition(this.x, this.y - 145)
       .setAlpha(this.alpha)
       .setVisible(this.visible);
 

@@ -7,6 +7,9 @@ export class BootScene extends Phaser.Scene {
   preload(): void {
     this.load.image('weapon-fist', 'assets/weapon-fist.png');
     this.load.image('weapon-minigun', 'assets/weapon-minigun.png');
+    this.load.image('minigun-mode-rapid', 'assets/minigun-mode-rapid.png');
+    this.load.image('minigun-mode-missile', 'assets/minigun-mode-missile.png');
+    this.load.image('minigun-mode-energy-ball', 'assets/minigun-mode-energy-ball.png');
   }
 
   create(): void {

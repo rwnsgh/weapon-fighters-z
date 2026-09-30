@@ -276,9 +276,7 @@ export class FightScene extends Phaser.Scene {
       && now < fighter.timeStopUntil
       && input.basic.isDown;
     if (Phaser.Input.Keyboard.JustDown(input.basic) || rapidClockShot) fighter.tryAttack('basic', now);
-    if (fighter.fighterConfig.id !== 'minigun' && Phaser.Input.Keyboard.JustDown(input.skill)) {
-      fighter.tryAttack('skill', now);
-    }
+    if (Phaser.Input.Keyboard.JustDown(input.skill)) fighter.tryAttack('skill', now);
     if (Phaser.Input.Keyboard.JustDown(input.ultimate)) fighter.tryAttack('ultimate', now);
   }
 
